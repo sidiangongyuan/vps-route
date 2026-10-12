@@ -200,8 +200,20 @@ curl --noproxy '*' -4 -fsS https://ipinfo.io/json
 在本机执行：
 
 ~~~bash
+vps-route init --dry-run
 vps-route init
 ~~~
+
+init 默认会封存旧的用户级 Claude 资料，不能在旧会话仍运行时执行。
+--dry-run 会询问连接信息并展示路径，但不写配置、不移动文件；正式 init 需重新填写。
+有旧资料时会显示清单并要求确认；不希望移动旧资料时用 init --keep-existing。
+init -y 只跳过封存确认，连接信息仍需填写；全自动可结合 --from-file 使用。
+不自动登录、下载 Claude、部署 VPS 或接管普通 claude 命令。
+
+默认移走 ~/.claude、~/.claude.json、~/.cache/claude-cli-nodejs、~/.cache/claude、
+~/.local/share/applications/claude-code-url-handler.desktop 中存在的项目，
+并封存所选 profile 中已有的独立安装和账号资料。目录内符号链接随目录移动，不跟随。
+项目源码/项目配置、.agents/skills、SSH 密钥和 HICC 不移动；自定义旧资料位置不自动扫描。
 
 下面是终端交互的填写示例，不能当成 shell 命令整段执行。
 方括号是工具默认值，冒号后是你输入的内容；空白表示直接回车：
@@ -358,6 +370,8 @@ vps-route logs --tail 20
 | ~/.local/share/claude-launcher/profiles/default/.local/bin/claude | 本机 | 官方 Claude 独立安装入口 |
 | ~/.local/share/claude-launcher/profiles/default/.claude/ | 本机 | 登录凭据、会话、技能、设置、记忆；不要分享 |
 | ~/.local/state/claude-launcher/logs/usage.jsonl | 本机 | 精简启动/退出日志，不记录提示词、code 或终端正文 |
+| ~/.local/share/claude-launcher/legacy-archives/cutover-xxx/ | 本机 | init 封存的旧用户级资料，权限 0700；含旧凭据，不分享 |
+| ~/.local/share/claude-launcher/profiles/.archives/default-xxx/ | 本机 | 所选独立 profile 的封存；含旧安装与账号资料 |
 | ~/.local/share/claude-launcher/server/ | VPS | 工具部署的 CONNECT 服务代码，不是 Claude 会话 |
 | ~/.local/state/claude-launcher/connect.sock | VPS | 配置默认路径时的私有通信 socket |
 | ~/.ssh/authorized_keys | VPS | 接受哪些本机公钥登录 |
@@ -385,9 +399,27 @@ VPS/代理故障时没有直连备用路径；上游无响应但 SSH 仍存活�
 | network_isolation_unavailable | 本机 bubblewrap 与非特权用户/网络命名空间支持；不要关闭隔离绕过 |
 | install_official_claude_in_separate_profile_first | 执行 install 后再登录或启动 |
 
+## 11. 卸载与选择性保留
+
+~~~bash
+vps-route uninstall --dry-run
+vps-route uninstall
+~~~
+
+默认卸载永久删除本工具的本地账号资料、独立 Claude、全部封存备份、日志、配置，
+并通过包管理器移除 vps-route。默认包含 init 移走的旧资料，先确认没有重要内容只剩这份备份。
+不连接或清理 VPS，不删除 SSH 密钥、项目源码、共享技能、其他 Claude 安装或仓库源码。
+仅删除工具生成的普通 claude 包装器，不恢复可能直连的旧入口。
+
+需要无人值守时使用 uninstall -y；需要保留某类资料时，可组合
+--keep-profiles、--keep-backups、--keep-logs、--keep-config、--keep-package。
+例如 uninstall --keep-backups --keep-logs 保留备份和日志，其他类别仍会删除。
+卸载范围与各种系统安装方式的边界详见 [使用说明](USAGE.zh-CN.md)。
+永久删除不是磁盘安全擦除、远端令牌撤销或“全新机器”的保证。
+
 当前是 Linux alpha：新用户仍需检查自己的 SSH/systemd 条件，不承诺所有 VPS 开箱即用。
 重置和扩大文件访问范围等操作请另看 [使用说明](USAGE.zh-CN.md)、
-[安全边界](SECURITY.md)。首次使用不需要清理旧账号或接管旧 claude 命令。
+[安全边界](SECURITY.md)。首次使用不需要接管旧 claude 命令。
 
 SSH 命令的格式依据：
 [OpenSSH ssh-keygen](https://man.openbsd.org/ssh-keygen)、

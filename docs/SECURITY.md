@@ -57,6 +57,11 @@ directories, logs, history, keys, or archives.
 ## Setup side effects
 
 init writes one new private connection config and refuses to overwrite it.
+It now archives conventional user-level Claude state and rotates the selected
+profile by default. --keep-existing opts out; --dry-run previews; -y only skips
+confirmation. Archives retain old credentials and may contain important work.
+init does not move HICC, project-level files, shared skills, SSH keys, or custom
+account locations. Existing configurations are never overwritten by repeated init.
 setup-vps --apply uploads only server modules and installs/enables/restarts the
 owned systemd CONNECT service. It does not provision SSH keys, modify SSH
 authentication, rewrite firewalls, or install VPN/residential-proxy services.
@@ -65,6 +70,16 @@ leave tool-owned files installed; there is no automatic full rollback.
 
 Do not point setup-vps at an existing socket owned by another service.
 The private Unix socket is never a public TCP proxy.
+
+uninstall is local-only and permanently removes profiles, archives, logs, config,
+and an exact generated wrapper by default. Selective --keep-* flags change the
+scope; -y does not bypass path ownership, process, symlink, or mount checks.
+Tree removal unlinks descendant symlinks rather than traversing their targets.
+The installer package is removed through its original pipx or venv pip; system
+Python installs need manual package-manager removal. No SSH command is invoked.
+Cleanup is bounded to known tool paths, not every copy of data on a machine.
+File deletion is not secure physical erasure, server-side token revocation, or
+removal of browser cookies, editor records, remote logs, snapshots or backups.
 
 ## Reporting
 

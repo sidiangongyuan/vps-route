@@ -23,6 +23,14 @@ class SetupTests(unittest.TestCase):
         self.home = Path(self.temporary.name)
         self.home_patch = patch.object(Path, "home", return_value=self.home)
         self.home_patch.start()
+        self.process_patch = patch(
+            "claude_launcher.legacy_cutover._same_user_legacy_process_running", return_value=False,
+        )
+        self.profile_patch = patch(
+            "claude_launcher.profile_reset._profile_is_running", return_value=False,
+        )
+        self.process_patch.start()
+        self.profile_patch.start()
         self.key = self.home / "key"
         self.hosts = self.home / "known-hosts"
         self.key.write_text("synthetic key, not usable")
@@ -36,6 +44,8 @@ class SetupTests(unittest.TestCase):
         }))
 
     def tearDown(self):
+        self.process_patch.stop()
+        self.profile_patch.stop()
         self.home_patch.stop()
         self.temporary.cleanup()
 
@@ -43,7 +53,7 @@ class SetupTests(unittest.TestCase):
         old = self.home / ".claude"
         old.mkdir()
         (old / "keep").write_text("synthetic old state")
-        config = initialize_config(default_config_path(), self.source)
+        config = initialize_config(default_config_path(), self.source, keep_existing=True)
         self.assertEqual(config.profile_home,
                          self.home / ".local/share/claude-launcher/profiles/default")
         self.assertEqual(default_config_path().stat().st_mode & 0o777, 0o600)
@@ -74,6 +84,67 @@ class SetupTests(unittest.TestCase):
         self.assertIsNone(config.ssh_http_proxy)
         self.assertIsNone(config.timezone)
         self.assertFalse(config.research_filesystem)
+
+    def test_default_init_archives_old_state_and_creates_empty_profile(self):
+        old = self.home / ".claude"
+        old.mkdir()
+        (old / "keep").write_text("synthetic old state")
+        hicc = self.home / ".hicc"
+        hicc.mkdir()
+        (hicc / "state").write_text("synthetic unrelated state")
+        with patch("claude_launcher.legacy_cutover._same_user_legacy_process_running",
+                   return_value=False), patch(
+                       "claude_launcher.profile_reset._profile_is_running", return_value=False):
+            config = initialize_config(default_config_path(), self.source, yes=True)
+        self.assertFalse(old.exists())
+        archives = list((self.home / ".local/share/claude-launcher/legacy-archives").iterdir())
+        self.assertEqual((archives[0] / "claude-home/keep").read_text(), "synthetic old state")
+        self.assertEqual(list(config.profile_home.iterdir()), [])
+        self.assertEqual((hicc / "state").read_text(), "synthetic unrelated state")
+
+    def test_init_preview_and_decline_do_not_create_config_or_move_old_state(self):
+        old = self.home / ".claude"
+        old.mkdir()
+        with patch("claude_launcher.legacy_cutover._same_user_legacy_process_running",
+                   return_value=False), patch(
+                       "claude_launcher.profile_reset._profile_is_running", return_value=False):
+            initialize_config(default_config_path(), self.source, dry_run=True)
+            with self.assertRaisesRegex(RouteError, "operation_cancelled"):
+                initialize_config(default_config_path(), self.source, prompt=lambda _: "n")
+        self.assertFalse(default_config_path().exists())
+        self.assertFalse((self.home / ".config").exists())
+        self.assertTrue(old.exists())
+
+    def test_init_yes_does_not_bypass_running_process_check(self):
+        with patch("claude_launcher.legacy_cutover._same_user_legacy_process_running",
+                   return_value=True):
+            with self.assertRaisesRegex(RouteError, "still_running"):
+                initialize_config(default_config_path(), self.source, yes=True)
+        self.assertFalse(default_config_path().exists())
+
+    def test_config_cannot_be_created_inside_a_directory_that_will_be_archived(self):
+        old = self.home / ".claude"
+        old.mkdir(mode=0o700)
+        with self.assertRaisesRegex(RouteError, "inside_archive_target"):
+            initialize_config(old / "route.json", self.source, yes=True)
+        self.assertFalse((old / "route.json").exists())
+        fresh = self.home / ".local/share/claude-launcher/profiles/default/config.json"
+        with self.assertRaisesRegex(RouteError, "inside_archive_target"):
+            initialize_config(fresh, self.source, yes=True)
+        self.assertFalse(fresh.parent.exists())
+
+    def test_init_preserves_ssh_material_in_custom_account_directories(self):
+        old = self.home / ".claude"
+        old.mkdir()
+        protected = old / "private-key"
+        protected.write_text("synthetic key")
+        values = json.loads(self.source.read_text())
+        values["identity_file"] = str(protected)
+        self.source.write_text(json.dumps(values))
+        with self.assertRaisesRegex(RouteError, "ssh_material_inside_archive_target"):
+            initialize_config(default_config_path(), self.source, yes=True)
+        self.assertTrue(protected.exists())
+        self.assertFalse(default_config_path().exists())
 
     def test_nonprivate_directory_is_not_chmodded(self):
         folder = self.home / "shared"

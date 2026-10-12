@@ -77,7 +77,7 @@ def reset_profile(config: Config) -> Path | None:
     return archive
 
 
-def full_reset_inventory(config: Config) -> dict[str, object]:
+def full_reset_inventory(config: Config, *, include_hicc: bool = True) -> dict[str, object]:
     """Preview exact state paths, without reading credentials or session contents."""
     from .legacy_cutover import legacy_inventory
 
@@ -95,7 +95,7 @@ def full_reset_inventory(config: Config) -> dict[str, object]:
             raise RouteError("unsafe_profile_path")
     if (active.parent / ".archives").is_symlink():
         raise RouteError("unsafe_archive_path")
-    legacy = legacy_inventory()
+    legacy = legacy_inventory(include_hicc=include_hicc)
     return {
         "profile": str(active),
         "profile_present": active.exists(),

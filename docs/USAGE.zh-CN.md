@@ -46,6 +46,16 @@ init 填连接地址、端口、用户名、私钥路径、known_hosts 路径、
 代理，例如 http://127.0.0.1:7890；不要填住宅代理或把它当最终出口。
 配置保存在 ~/.config/vps-route/config.json，不覆盖已有配置。
 
+init 不再只填连接信息：默认先展示并封存旧的用户级 Claude 资料和所选独立 profile，
+再建立空 profile。检测到相关 Claude/HICC 进程仍在运行就拒绝，不自动结束会话。
+有旧资料时需要确认；-y 只跳过确认。init --dry-run 仅预览，
+init --keep-existing 只写连接配置、保留已有状态。重复 init 不会覆盖配置或再次清理；
+已经初始化后的重建使用 reset。
+旧资料包括 ~/.claude（含技能、凭据、会话、配置）、~/.claude.json、
+~/.cache/claude-cli-nodejs、~/.cache/claude 和 Claude URL handler。
+不动项目内文件、共享 .agents/skills、SSH 密钥、HICC 或 VPS；自定义旧资料路径不自动扫描。
+封存路径见完整例子。封存是移走并保留，不是令牌撤销或伪造新机器。
+
 setup-vps 默认预览，--apply 才部署。它只增加本工具的私有 CONNECT 服务；
 不动朋友的 SS/Hy2、VPN、SSH、端口、防火墙或 Claude 账号。
 已有兼容 CONNECT 服务时，填原 socket，跳过部署。
@@ -117,3 +127,36 @@ vps-route reset
 封存并非删除备份、撤销令牌或伪造全新机器。
 
 自检或代理故障应修复连接，不要关闭网络隔离来绕过故障。
+
+## 本机卸载：默认永久删除备份
+
+~~~bash
+vps-route uninstall --dry-run
+vps-route uninstall
+# 已确认预览内容后，非交互执行可用：
+vps-route uninstall -y
+~~~
+
+默认先列出清单、要求确认，再永久删除本工具的本地 profile（含独立 Claude 和账号资料）、
+全部 profile 封存、旧资料封存、日志、连接配置，以及本工具生成的普通 claude 包装器。
+随后用 pipx 或当前虚拟环境的 pip 卸载 vps-route 包。不读取账号正文，不连接 VPS。
+有关进程仍在运行、目录属于其他用户、危险链接/挂载或清理范围在确认期间改变时拒绝执行。
+-y 不跳过这些检查。不恢复可能直连的旧 claude 包装器。
+
+选择性保留可以组合使用：
+
+~~~bash
+vps-route uninstall --keep-backups --keep-logs
+vps-route uninstall --keep-profiles --keep-config --keep-package
+~~~
+
+可用 --keep-profiles、--keep-backups、--keep-logs、--keep-config、--keep-package。
+保留 profile 不代表保留备份，两类分别控制。通过 --config 指定的本机 HOME 内配置也会删除；
+HOME 外的配置不自动删除。工具默认目录外的配置必须能验证为连接配置，
+损坏或无法识别的自定义文件需手动处理，避免 --config 误删其他文件。
+系统 Python 安装不自动卸载包，请用 --keep-package
+后按原包管理方式卸载。新用户推荐 pipx 或独立虚拟环境安装。
+
+项目源码、共享技能、SSH 私钥、其他 Claude 安装、仓库源码、Python 环境和 VPS 服务不删除。
+已经搬入封存中的旧用户技能也属于备份，会随默认卸载删除。
+这是永久文件删除，不是磁盘安全擦除，也不会撤销远端令牌或清理浏览器/编辑器/云备份。

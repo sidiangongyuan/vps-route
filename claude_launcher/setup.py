@@ -1,4 +1,4 @@
-"""Create explicit per-user configuration without touching any account or service."""
+"""Initialize a private route and archive old local Claude state by default."""
 
 from __future__ import annotations
 
@@ -30,7 +30,8 @@ def _private_parent(path: Path) -> None:
 
 
 def initialize_config(destination: Path, source: Path | None = None,
-                      prompt: Callable[[str], str] = input) -> Config:
+                      prompt: Callable[[str], str] = input, *, keep_existing: bool = False,
+                      dry_run: bool = False, yes: bool = False) -> Config:
     """Write a validated config exclusively; never overwrite an existing file."""
     destination = destination.expanduser().absolute()
     if destination.exists() or destination.is_symlink():
@@ -69,6 +70,32 @@ def initialize_config(destination: Path, source: Path | None = None,
             config = Config.load(candidate)
     if not config.identity_file.is_file() or not config.known_hosts.is_file():
         raise RouteError("ssh_key_or_verified_known_hosts_missing")
+    from .lifecycle import (
+        archive_for_initialization, confirm_operation, initialization_inventory,
+    )
+
+    inventory = initialization_inventory(config) if not keep_existing else {
+        "archive_paths": [], "existing_state_preserved": True,
+    }
+    if not keep_existing:
+        from .legacy_cutover import LEGACY_ITEMS
+
+        targets = [Path.home() / path for name, path in LEGACY_ITEMS.items()
+                   if name != "hicc-home"] + [config.profile_home]
+        if any(destination.is_relative_to(path) for path in targets):
+            raise RouteError("config_path_inside_archive_target; choose_a_separate_private_directory")
+        for protected in (config.identity_file, config.known_hosts):
+            if any(protected.resolve().is_relative_to(path) for path in targets):
+                raise RouteError("ssh_material_inside_archive_target; move_it_or_use_--keep-existing")
+    print(json.dumps({"config_path": str(destination), **inventory}, indent=2))
+    if dry_run:
+        return config
+    if not keep_existing:
+        if inventory["process_running"]:
+            raise RouteError("claude_or_hicc_still_running; close_sessions_before_init")
+        if inventory["archive_paths"]:
+            confirm_operation("Archive this old Claude state and create a fresh profile?",
+                              yes=yes, prompt=prompt)
     _private_parent(destination)
     payload = asdict(config)
     for name in ("identity_file", "known_hosts", "texlive_root"):
@@ -78,4 +105,12 @@ def initialize_config(destination: Path, source: Path | None = None,
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
         json.dump(payload, stream, indent=2)
         stream.write("\n")
+    if not keep_existing:
+        try:
+            archives = archive_for_initialization(config)
+        except (RouteError, OSError):
+            # Keep archives on partial failure, but never advertise a ready route.
+            destination.unlink()
+            raise
+        print(json.dumps(archives, indent=2))
     return config

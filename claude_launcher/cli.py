@@ -301,8 +301,22 @@ def main() -> int:
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--config", type=Path)
     subparsers = parser.add_subparsers(dest="action", required=True)
-    initialize = subparsers.add_parser("init", help="create private config; no login or deployment")
+    initialize = subparsers.add_parser(
+        "init", help="archive old local Claude state and create private config; no login",
+    )
     initialize.add_argument("--from-file", type=Path, help="import a validated connection config")
+    initialize.add_argument("--keep-existing", action="store_true",
+                            help="create config only; do not archive existing Claude state")
+    initialize.add_argument("--dry-run", action="store_true", help="preview without writing or moving")
+    initialize.add_argument("-y", "--yes", action="store_true", help="skip archive confirmation only")
+    uninstall = subparsers.add_parser(
+        "uninstall", help="permanently remove local profiles, backups, logs, config and package",
+    )
+    uninstall.add_argument("--dry-run", action="store_true", help="preview; do not delete")
+    uninstall.add_argument("-y", "--yes", action="store_true", help="skip deletion confirmation only")
+    for category in ("profiles", "backups", "logs", "config", "package"):
+        uninstall.add_argument(f"--keep-{category}", action="store_true",
+                               help=f"preserve {category} during local cleanup")
     provision = subparsers.add_parser("setup-vps", help="deploy only the private VPS CONNECT service")
     provision.add_argument("--apply", action="store_true", help="install through verified SSH")
     inspect = subparsers.add_parser("doctor", help="offline checks; optional VPS route probe")
@@ -343,9 +357,24 @@ def main() -> int:
     try:
         if args.action == "init":
             path = args.config or default_config_path()
-            initialize_config(path, args.from_file)
+            initialize_config(path, args.from_file, keep_existing=args.keep_existing,
+                              dry_run=args.dry_run, yes=args.yes)
+            if args.dry_run:
+                print("Preview only; no configuration or account state changed.")
+                return 0
             print(f"Private config created: {path}")
             print("Next: vps-route setup-vps --apply (or use an existing CONNECT service)")
+            return 0
+        if args.action == "uninstall":
+            from .lifecycle import uninstall_inventory, uninstall_local
+
+            path = args.config or default_config_path()
+            options = {f"keep_{name}": getattr(args, f"keep_{name}")
+                       for name in ("profiles", "backups", "logs", "config", "package")}
+            if args.dry_run:
+                print(json.dumps(uninstall_inventory(path, **options), indent=2))
+            else:
+                print(json.dumps(uninstall_local(path, yes=args.yes, **options), indent=2))
             return 0
         if args.action == "logs":
             print(log_tail(args.tail))

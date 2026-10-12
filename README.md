@@ -101,12 +101,20 @@ known-hosts file, private remote socket path, expected final exit IP/country,
 profile name, and optional timezone/local SSH bootstrap proxy.
 
 Config defaults to ~/.config/vps-route/config.json, with private permissions.
-The wizard refuses to overwrite an existing file. You can also edit a copy of
+By default, init archives conventional user-level Claude state and any existing
+selected profile before creating a fresh profile. It shows the paths and asks for
+confirmation when old data exists. Close Claude/HICC sessions first. This does
+not delete projects, shared skills, SSH keys, HICC state, or VPS files.
+The wizard refuses to overwrite an existing config. You can also edit a copy of
 [config.example.json](config.example.json) and import it:
 
 ~~~bash
 vps-route init --from-file ./my-route.json
 ~~~
+
+Use --dry-run to preview, --keep-existing for connection-config-only setup, and
+-y to skip archive confirmation without bypassing validation or process checks.
+See the [first-run example](docs/FIRST_RUN.zh-CN.md) for exact paths and side effects.
 
 For a VPS that does not already run the private CONNECT service:
 
@@ -202,8 +210,8 @@ not a hardcoded city, and does not change either machine's system timezone.
 
 ## Reset and migration
 
-Normal setup does not clean up your old Claude/HICC files. Isolation prevents
-automatic reuse without destroying the original data.
+Default init moves old conventional Claude state into a private archive.
+For a later clean start, reset remains an explicit operation:
 
 ~~~bash
 vps-route reset                    # preview full inventory
@@ -220,6 +228,29 @@ Archive is preservation, not physical erasure, token revocation, a new machine
 identity, or a guarantee about account restrictions.
 Legacy wrapper cutover remains an explicit advanced migration command, not an
 installation default. Do not use it just to get started.
+
+## Local uninstall
+
+~~~bash
+vps-route uninstall --dry-run       # inspect the permanent deletion list
+vps-route uninstall                 # show list and require confirmation
+vps-route uninstall -y              # same scope, skip confirmation
+~~~
+
+Default uninstall permanently deletes local tool profiles (including downloaded
+Claude), profile/legacy archives, logs, connection config, and an exact
+tool-generated Claude wrapper. It then removes the package using pipx or the
+current virtual environment's pip. No VPS connection or remote removal occurs.
+Projects, SSH keys, shared skills, unrelated Claude installations, system Python,
+and repository source remain untouched. Historical archive contents are included
+in deletion; do not uninstall if those are your only copies of important work.
+
+--keep-profiles, --keep-backups, --keep-logs, --keep-config, and --keep-package
+preserve selected categories. The default is deletion, not retention. No force
+flag bypasses live-process, ownership, symlink, or mount checks. Use --keep-package
+and your original package manager for a non-venv system installation.
+Deletion is not disk sanitization, server-side token revocation, or removal of
+arbitrary copies in custom locations, browser history, cloud backups, or editors.
 
 ## Development and release status
 

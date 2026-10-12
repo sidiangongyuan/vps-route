@@ -22,6 +22,7 @@ LEGACY_ITEMS = {
     "claude-global": Path(".claude.json"),
     "hicc-home": Path(".hicc"),
     "claude-cli-cache": Path(".cache/claude-cli-nodejs"),
+    "claude-cache": Path(".cache/claude"),
     "claude-url-handler": Path(".local/share/applications/claude-code-url-handler.desktop"),
 }
 ARCHIVE_PARENT = Path(".local/share/claude-launcher/legacy-archives")
@@ -87,11 +88,11 @@ def _home(home: Path | None) -> Path:
     return root.absolute()
 
 
-def legacy_inventory(home: Path | None = None) -> dict[str, object]:
+def legacy_inventory(home: Path | None = None, *, include_hicc: bool = True) -> dict[str, object]:
     """List path labels only; never inspect old account file contents."""
     root = _home(home)
     present = [name for name, relative in LEGACY_ITEMS.items()
-               if _safe_path(root, root / relative)]
+               if (include_hicc or name != "hicc-home") and _safe_path(root, root / relative)]
     return {"present": present,
             "legacy_process_running": _same_user_legacy_process_running()}
 
@@ -104,10 +105,10 @@ def _archive_parent(home: Path) -> Path:
     return parent
 
 
-def archive_legacy_state(home: Path | None = None) -> Path:
+def archive_legacy_state(home: Path | None = None, *, include_hicc: bool = True) -> Path:
     """Move exact legacy paths into one private archive after HICC is retired."""
     root = _home(home)
-    inventory = legacy_inventory(root)
+    inventory = legacy_inventory(root, include_hicc=include_hicc)
     if inventory["legacy_process_running"]:
         raise RouteError("legacy_claude_or_hicc_still_running")
     if not inventory["present"]:
