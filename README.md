@@ -10,6 +10,11 @@ It is not affiliated with Anthropic.
 
 [中文使用说明](docs/USAGE.zh-CN.md) · [Security boundaries](docs/SECURITY.md)
 
+New to VPS Route? Follow the [complete first-run example](docs/FIRST_RUN.zh-CN.md):
+required VPS information, local versus remote paths, SSH preparation, the exact
+initialization prompts, latest Claude installation, login, and troubleshooting.
+Private example values are masked as xxx and must be replaced before use.
+
 ## What it does
 
 - Verifies the SSH host against your existing known-hosts file.
