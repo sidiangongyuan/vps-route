@@ -1,0 +1,18 @@
+{
+  "ssh_host": "REPLACE_WITH_VPS_IP",
+  "ssh_user": "vpsuser",
+  "ssh_port": 22,
+  "identity_file": "~/.ssh/claude_vps_ed25519",
+  "known_hosts": "~/.ssh/known_hosts",
+  "remote_socket": "/REPLACE_WITH_VPS_USER_HOME/.local/state/claude-launcher/connect.sock",
+  "expected_ip": "REPLACE_WITH_EXPECTED_EGRESS_IP",
+  "expected_country": "US",
+  "profile": "default",
+  "timezone": null,
+  "probe_url": "https://ipinfo.io/json",
+  "interval_seconds": 5,
+  "timeout_seconds": 8,
+  "ssh_http_proxy": null,
+  "texlive_root": null,
+  "research_filesystem": false
+}

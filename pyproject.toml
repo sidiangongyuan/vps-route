@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vps-route"
+dynamic = ["version"]
+description = "Linux Claude Code launcher with an isolated profile and an SSH-owned VPS route"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "LicenseRef-Proprietary"
+license-files = ["LICENSE"]
+authors = [{name = "sidiangongyuan"}]
+dependencies = []
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: System :: Networking",
+]
+
+[project.urls]
+Repository = "https://github.com/sidiangongyuan/vps-route"
+Issues = "https://github.com/sidiangongyuan/vps-route/issues"
+
+[project.scripts]
+vps-route = "claude_launcher.entrypoint:main"
+vps-route-server = "claude_launcher.entrypoint:server_main"
+
+[tool.setuptools.packages.find]
+include = ["claude_launcher", "claude_launcher.*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "claude_launcher.__version__"}
