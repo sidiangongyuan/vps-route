@@ -25,10 +25,13 @@ SAFE_REASONS = {
     "egress_country_changed", "egress_country_unknown", "route_not_started",
     "install_official_claude_in_separate_profile_first", "native_launcher_missing_after_update",
     "updated_binary_unusable", "update_verification_route_failed", "operation_failed",
-    "interrupted",
+    "interrupted", "already_installed",
     "system_python_3_10_required",
     "proxy_socket_unavailable", "proxy_connect_rejected", "probe_transport_failure",
     "probe_http_failure", "probe_invalid_json", "probe_response_too_large",
+    "probe_tls_failed", "probe_tls_certificate_failed", "upstream_unavailable",
+    "target_resolution_failed", "connect_target_rejected", "nonpublic_target_rejected",
+    "launcher_interrupted",
 }
 
 

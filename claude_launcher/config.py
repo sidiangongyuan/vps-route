@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,9 +46,17 @@ class Config:
     @classmethod
     def load(cls, path: Path) -> Config:
         try:
-            values = json.loads(path.read_text())
+            return cls.from_values(json.loads(path.read_text()))
+        except (OSError, ValueError):
+            raise RouteError("invalid_or_unreadable_config") from None
+
+    @classmethod
+    def from_values(cls, values: dict) -> Config:
+        """Validate file and CLI input with exactly the same policy."""
+        try:
             if not isinstance(values, dict):
                 raise ValueError
+            values = dict(values)
             # Accept old config files while ignoring the retired browser worker.
             values.pop("browser_agent", None)
             values["identity_file"] = Path(values["identity_file"]).expanduser().absolute()
@@ -55,6 +64,10 @@ class Config:
             if values.get("texlive_root") is not None:
                 values["texlive_root"] = Path(values["texlive_root"]).expanduser().absolute()
             config = cls(**values)
+            for name in ("ssh_host", "ssh_user", "remote_socket", "expected_ip",
+                         "expected_country", "profile", "probe_url"):
+                if not isinstance(getattr(config, name), str):
+                    raise ValueError
             if not isinstance(config.research_filesystem, bool):
                 raise ValueError
             if config.timezone is not None:
@@ -76,10 +89,13 @@ class Config:
                 raise ValueError
             if not re.fullmatch(r"[a-zA-Z0-9_-]{1,40}", config.profile):
                 raise ValueError
-            if not 1 <= config.ssh_port <= 65535:
+            if (isinstance(config.ssh_port, bool) or not isinstance(config.ssh_port, int)
+                    or not 1 <= config.ssh_port <= 65535):
                 raise ValueError
-            if not 1 <= config.interval_seconds <= 60 or not 1 <= config.timeout_seconds <= 30:
-                raise ValueError
+            for value, maximum in ((config.interval_seconds, 60), (config.timeout_seconds, 30)):
+                if (isinstance(value, bool) or not isinstance(value, (int, float))
+                        or not math.isfinite(value) or not 1 <= value <= maximum):
+                    raise ValueError
             if (isinstance(config.runtime_probe_interval_seconds, bool)
                     or not isinstance(config.runtime_probe_interval_seconds, (int, float))
                     or not 5 <= config.runtime_probe_interval_seconds <= 300
@@ -88,6 +104,8 @@ class Config:
                     or not 1 <= config.runtime_probe_failures <= 10):
                 raise ValueError
             if config.ssh_http_proxy is not None:
+                if not isinstance(config.ssh_http_proxy, str):
+                    raise ValueError
                 bootstrap = urlsplit(config.ssh_http_proxy)
                 if (
                     bootstrap.scheme != "http" or bootstrap.hostname != "127.0.0.1"

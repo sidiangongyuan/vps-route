@@ -1,87 +1,68 @@
-# Security boundaries
+# Security
 
-## Supported claim
+## Connection protection
 
-The Linux launcher creates a private network namespace for the child process
-tree. Its only intended external route is a private Unix socket forwarded over
-verified SSH, presented as a loopback HTTP CONNECT proxy. In that namespace,
-removing proxy variables does not create a direct IPv4/IPv6 route. The server
-resolves target names on the VPS and accepts only public HTTPS destinations on
-TCP 443. It does not terminate the destination TLS connection.
+Claude runs on your Linux computer, not on the VPS. The tool gives the Claude
+process and its children a separate network environment with no direct external
+IPv4/IPv6 route. HTTPS goes through a private proxy connection carried over SSH
+to your VPS. Destination DNS resolution happens on the VPS; destination TLS is
+not terminated by the tool's proxy.
 
-Changing the host VPN can change SSH reachability; it does not add an interface
-to the child's network namespace. An explicit local bootstrap HTTP proxy is
-used only for the SSH transport. No automatic direct SSH fallback is selected
-if that proxy is unavailable.
+SSH key authentication and strict host-key verification are required. Verify
+the VPS fingerprint through its console or administrator before configuring it.
+A configured local VPN/proxy may carry SSH, but it is not a fallback Claude exit.
 
-SSH host keys must be independently verified and stored in the configured
-known-hosts file. The launcher uses strict checking and key authentication.
-The VPS operator can observe connection destinations/timing and manage the
-server. This tool does not hide local OS metadata from Claude or promise that
-the client appears to execute on the VPS.
+Before launch, the configured exit IP/country must match. If this check fails,
+Claude does not start. During use, SSH is monitored and the exit is checked
+periodically (every 30 seconds by default). A confirmed mismatch stops Claude
+when detected; other probe failures stop it after two consecutive failures by
+default. The terminal window stays open, so you can check the connection and restart.
 
-## Failure handling
+These are periodic checks, not instant prevention of an upstream exit change.
+The check website can also fail independently of Claude. While a connection is
+stalled or a check is pending, the isolated network still has no direct fallback.
 
-- Before every launch, the configured public exit IP and country must match.
-- A failed preflight prevents the Claude child from starting.
-- SSH process exit closes the owned route and terminates the owned child tree.
-- During a transport stall, connections may hang until SSH declares failure.
-  The child has no direct route in the meantime.
-- Runtime checks are not periodic public exit-IP checks. Changing the VPS's
-  upstream route after startup is not necessarily detected.
-- No IP reputation, country, proxy, or timezone test guarantees account safety.
+## What is not covered
 
-## Scope exclusions
+- Your browser, links opened outside the terminal, editor extensions and unrelated
+  applications do not automatically use this route.
+- A host-side service asked to perform work is outside the child's network boundary.
+- Project files, including secrets in the selected project, can be read by Claude.
+  The tool is not a sandbox for running hostile code.
+- Optional `research_filesystem` access exposes more host files. Enable it only
+  for trusted work; it does not hide every credential location or host identifier.
+- The VPS operator can observe destinations and connection timing. This tool does
+  not conceal OS metadata or make the client appear to run on the VPS.
+- Exit checks do not measure IP reputation or guarantee against account restrictions.
 
-The host browser, VS Code extension, Orca, other processes, and a Claude process
-started outside this tool are not covered. Children launched in the tool's
-namespace are covered; asking a host-side service to act on their behalf is a
-different boundary.
+## Your data
 
-Default project-only mode hides the host HOME. It still exposes the selected
-project, system runtime files including /etc, and the independent profile.
-Project secrets such as .env files in that selected project can be read.
+The independent profile contains real credentials and conversation history after
+login. Keep it private, along with SSH keys and connection config. Connection logs
+record brief startup/check/exit metadata, not prompts, login codes or account tokens.
 
-Opt-in research_filesystem mode intentionally exposes broader host trees and
-masks known private paths and currently bound filesystem Unix sockets.
-This is not a hostile-code sandbox or a generic data-loss-prevention mechanism:
-new host IPC relays, alternate credential locations, hard links, other host
-users' accessible files, and races are not comprehensively prohibited. Do not
-enable it for untrusted projects. It is not a guarantee of hiding every host
-identifier or file.
+`init` creates or reuses config and profile directories without clearing old data.
+`install` skips an existing executable entry inside the profile and refuses
+invalid or external entries. It does not reset account files.
 
-The profile contains real credentials after login. Reset archives may contain
-them too. Archive is not deletion or revocation. Do not publish profile/config
-directories, logs, history, keys, or archives.
+`setup-vps --apply` installs this tool's private service. It does not configure
+SSH authentication, a VPN, residential proxies or firewall rules. Do not select
+a service path used by another application. Service installation may leave its
+own files behind on failure; there is no direct fallback.
 
-## Setup side effects
+`uninstall` permanently removes local tool data by default, including profiles
+and historical backups. Preview first and use `--keep-*` options to retain data.
+It never connects to or removes anything on the VPS. Local file deletion does
+not revoke server-side tokens or erase browser cookies, snapshots or other copies.
 
-init writes one new private connection config and refuses to overwrite it.
-It now archives conventional user-level Claude state and rotates the selected
-profile by default. --keep-existing opts out; --dry-run previews; -y only skips
-confirmation. Archives retain old credentials and may contain important work.
-init does not move HICC, project-level files, shared skills, SSH keys, or custom
-account locations. Existing configurations are never overwritten by repeated init.
-setup-vps --apply uploads only server modules and installs/enables/restarts the
-owned systemd CONNECT service. It does not provision SSH keys, modify SSH
-authentication, rewrite firewalls, or install VPN/residential-proxy services.
-For an existing compatible service, skip this command. Service failures can
-leave tool-owned files installed; there is no automatic full rollback.
+## Reporting problems
 
-Do not point setup-vps at an existing socket owned by another service.
-The private Unix socket is never a public TCP proxy.
+Report the command used and the error message. Remove keys, tokens, authorization
+codes, account screenshots and conversation content before sharing. A sanitized
+report can be generated with:
 
-uninstall is local-only and permanently removes profiles, archives, logs, config,
-and an exact generated wrapper by default. Selective --keep-* flags change the
-scope; -y does not bypass path ownership, process, symlink, or mount checks.
-Tree removal unlinks descendant symlinks rather than traversing their targets.
-The installer package is removed through its original pipx or venv pip; system
-Python installs need manual package-manager removal. No SSH command is invoked.
-Cleanup is bounded to known tool paths, not every copy of data on a machine.
-File deletion is not secure physical erasure, server-side token revocation, or
-removal of browser cookies, editor records, remote logs, snapshots or backups.
+```bash
+vps-route doctor --connect --report ~/.config/vps-route/support.json
+```
 
-## Reporting
-
-This is a private alpha, not a security-reviewed public release. Report issues
-privately without pasting keys, tokens, prompts, or account screenshots.
+The tool is under development and has not received an independent security audit.

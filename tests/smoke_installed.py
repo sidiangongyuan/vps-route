@@ -36,10 +36,19 @@ def main() -> int:
         runs = []
         for arguments, expected in [
             (["--version"], 0),
+            (["init", "--from-file", str(source), "--keep-existing"], 0),
             (["init", "--from-file", str(source)], 0),
             (["doctor"], 0),
+            (["config", "show"], 0),
+            (["config", "validate"], 0),
+            (["config", "set", "timeout_seconds", "12"], 0),
+            (["config", "set", "timeout_seconds", "12", "--apply"], 0),
+            (["doctor", "--report", str(home / ".config/vps-route/support.json")], 0),
+            (["status"], 0),
+            (["sessions", "list"], 0),
+            (["auth", "reset", "--dry-run"], 0),
             (["setup-vps"], 0),
-            (["init", "--from-file", str(source)], 69),
+            (["init"], 0),
         ]:
             result = subprocess.run([str(executable), *arguments], env=env, cwd=project,
                                     capture_output=True, text=True, timeout=15)
@@ -48,7 +57,40 @@ def main() -> int:
         config = home / ".config/vps-route/config.json"
         assert config.stat().st_mode & 0o777 == 0o600
         assert (old / "keep").read_text() == "synthetic legacy data"
-        assert not (home / ".local/share/claude-launcher/profiles").exists()
+        profile = home / ".local/share/claude-launcher/profiles/default"
+        assert profile.is_dir()
+        assert profile.stat().st_mode & 0o777 == 0o700
+        assert json.loads(config.read_text())["timeout_seconds"] == 12
+        account = profile / ".claude/.credentials.json"
+        account.parent.mkdir()
+        account.write_text("synthetic account, not usable")
+        entry = profile / ".local/bin/claude"
+        entry.parent.mkdir(parents=True)
+        entry.write_text("#!/bin/sh\nexit 99\n")
+        entry.chmod(0o700)
+        before = config.read_bytes()
+        assert not (profile / "auth-workspace").exists()
+        for arguments in (["install"], ["install"], ["init"]):
+            result = subprocess.run([str(executable), *arguments], env=env, cwd=project,
+                                    capture_output=True, text=True, timeout=15)
+            assert result.returncode == 0, result.stdout + result.stderr
+            if arguments == ["install"]:
+                assert "already installed" in result.stdout
+            else:
+                assert '"claude_installed": true' in result.stdout
+            runs.append({"command": arguments[0], "exit_code": result.returncode})
+        # source still has timeout=8, while the existing config now has timeout=12.
+        result = subprocess.run([str(executable), "init", "--from-file", str(source)],
+                                env=env, cwd=project, capture_output=True, text=True, timeout=15)
+        assert result.returncode == 69, result.stdout + result.stderr
+        assert "config_already_exists_and_differs" in result.stdout
+        runs.append({"command": "init_conflicting_import", "exit_code": result.returncode})
+        assert config.read_bytes() == before
+        assert account.read_text() == "synthetic account, not usable"
+        assert not (profile / "auth-workspace").exists()
+        report = home / ".config/vps-route/support.json"
+        assert report.stat().st_mode & 0o777 == 0o600
+        assert "203.0.113" not in report.read_text()
         print(json.dumps({"installed_cli_smoke": "ok", "fresh_home": True,
                           "legacy_state_preserved": True, "account_login_performed": False,
                           "remote_deployment_performed": False, "runs": runs}, indent=2))

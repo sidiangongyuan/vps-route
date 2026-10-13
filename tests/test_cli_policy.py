@@ -1,5 +1,6 @@
 """CLI policy routing without starting the real route or account client."""
 
+import contextlib
 import sys
 import unittest
 from pathlib import Path
@@ -13,6 +14,9 @@ class CliPolicyTests(unittest.TestCase):
     def setUp(self):
         self.config = Config("203.0.113.1", "fixture", 22, Path("unused"), Path("unused"),
                              "/unused", "203.0.113.7", "US")
+        barrier = patch.object(cli, "maintenance_barrier", return_value=contextlib.nullcontext())
+        barrier.start()
+        self.addCleanup(barrier.stop)
 
     def test_run_defaults_to_skills_with_optional_safe_mode_and_unmodified_update(self):
         for command, expected in [(["run", "--", "--version"], (False, False, True)),
@@ -94,8 +98,9 @@ class CliPolicyTests(unittest.TestCase):
             launch.assert_not_called()
 
     def test_full_reset_installs_through_existing_route_without_login(self):
-        with patch.object(sys, "argv", ["vps-route", "--config", "/unused", "reset", "--apply"]), \
+        with patch.object(sys, "argv", ["vps-route", "--config", "/unused", "reset", "--apply", "-y"]), \
              patch.object(cli.Config, "load", return_value=self.config), \
+             patch.object(cli, "full_reset_inventory", return_value={}), \
              patch.object(cli, "reset_local_state", return_value={}) as reset, \
              patch.object(cli, "launch", return_value=0) as launch, \
              patch.object(Path, "mkdir"):
@@ -105,8 +110,9 @@ class CliPolicyTests(unittest.TestCase):
             self.assertEqual(launch.call_args.kwargs, {"install": True, "verify_after": True})
 
     def test_full_reset_install_failure_is_not_reported_as_success(self):
-        with patch.object(sys, "argv", ["vps-route", "--config", "/unused", "reset", "--apply"]), \
+        with patch.object(sys, "argv", ["vps-route", "--config", "/unused", "reset", "--apply", "-y"]), \
              patch.object(cli.Config, "load", return_value=self.config), \
+             patch.object(cli, "full_reset_inventory", return_value={}), \
              patch.object(cli, "reset_local_state", return_value={}), \
              patch.object(cli, "launch", return_value=69), \
              patch.object(Path, "mkdir"):
@@ -146,6 +152,44 @@ class CliPolicyTests(unittest.TestCase):
             self.assertNotIn("BatchMode=yes", command)
             self.assertIn("PubkeyAuthentication=no", command)
             self.assertIn("StrictHostKeyChecking=yes", command)
+
+    def test_auth_reset_defaults_to_preview_and_apply_requires_confirmation(self):
+        for arguments, applied in [([], False), (["--dry-run"], False),
+                                   (["--apply", "-y"], True)]:
+            with patch.object(sys, "argv", ["vps-route", "--config", "/unused",
+                                            "auth", "reset", *arguments]), \
+                    patch.object(cli.Config, "load", return_value=self.config), \
+                    patch("claude_launcher.profile_reset.profile_reset_inventory",
+                          return_value={"profile_process_running": False}), \
+                    patch.object(cli, "reset_profile", return_value=None) as reset:
+                self.assertEqual(cli.main(), 0)
+                self.assertEqual(reset.called, applied)
+
+    def test_auth_reset_decline_and_running_process_never_rotate(self):
+        for running in (False, True):
+            with patch.object(sys, "argv", ["vps-route", "--config", "/unused",
+                                            "auth", "reset", "--apply"]), \
+                    patch.object(cli.Config, "load", return_value=self.config), \
+                    patch("claude_launcher.profile_reset.profile_reset_inventory",
+                          return_value={"profile_process_running": running}), \
+                    patch("claude_launcher.lifecycle.confirm_operation",
+                          side_effect=cli.RouteError("operation_cancelled")), \
+                    patch.object(cli, "reset_profile") as reset:
+                self.assertEqual(cli.main(), 69)
+                reset.assert_not_called()
+
+    def test_process_status_and_self_update_do_not_load_account_or_route_config(self):
+        with patch.object(sys, "argv", ["vps-route", "status"]), \
+                patch.object(cli, "list_sessions", return_value=[]), \
+                patch.object(cli.Config, "load") as load:
+            self.assertEqual(cli.main(), 0)
+            load.assert_not_called()
+        with patch.object(sys, "argv", ["vps-route", "self-update", "--check"]), \
+                patch("claude_launcher.updates.self_update", return_value={}) as update, \
+                patch.object(cli.Config, "load") as load:
+            self.assertEqual(cli.main(), 0)
+            update.assert_called_once_with(version=None, apply=False, rollback=False)
+            load.assert_not_called()
 
 
 if __name__ == "__main__":

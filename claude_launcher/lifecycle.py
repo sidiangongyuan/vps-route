@@ -114,9 +114,12 @@ def uninstall_inventory(config_path: Path, *, keep_profiles: bool = False,
                 _safe_path(home, entry, expect_directory=True)
                 paths.append(entry)
     if not keep_backups:
-        paths.extend([profiles / ".archives", home / ARCHIVE_PARENT])
+        paths.extend([profiles / ".archives", home / ARCHIVE_PARENT,
+                      home / ".local/state/claude-launcher/updates"])
     if not keep_logs:
         paths.append(home / ".local/state/claude-launcher/logs")
+    paths.extend([home / ".local/state/claude-launcher/sessions",
+                  home / ".local/state/claude-launcher/.maintenance.lock"])
     if not keep_config:
         paths.append(home / ".config/vps-route")
         supplied = config_path.expanduser().absolute()
@@ -154,10 +157,15 @@ def uninstall_inventory(config_path: Path, *, keep_profiles: bool = False,
                 if any(protected.resolve().is_relative_to(path) for path in present):
                     raise RouteError("ssh_material_inside_cleanup_target; move_it_or_keep_category")
     command = None if keep_package else _package_command()
+    from .sessions import list_sessions, maintenance_in_use
+
+    tracked_running = any(item["state"] == "running" for item in list_sessions())
     return {
         "delete_paths": [str(path) for path in present],
         "package_command": command,
-        "process_running": _same_user_legacy_process_running() or _profile_is_running(profiles),
+        "process_running": tracked_running or maintenance_in_use()
+        or _same_user_legacy_process_running()
+        or _profile_is_running(profiles),
         "local_only": True,
         "permanent_deletion": True,
         "secure_physical_erasure": False,

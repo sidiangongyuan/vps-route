@@ -77,6 +77,22 @@ def reset_profile(config: Config) -> Path | None:
     return archive
 
 
+def profile_reset_inventory(config: Config) -> dict[str, object]:
+    """Only the selected profile; auth reset must not inspect legacy account stores."""
+    active = config.profile_home
+    home = Path.home().resolve()
+    for path in (active, *active.parents):
+        if path == home:
+            break
+        if (path.is_symlink() or (path.exists() and
+                (not path.is_dir() or path.stat().st_uid != os.getuid()))):
+            raise RouteError("unsafe_profile_path")
+    return {"profile": str(active), "profile_present": active.exists(),
+            "profile_process_running": _profile_is_running(active),
+            "archive_not_delete": True, "account_files_read": False,
+            "vps_and_project_files_unchanged": True}
+
+
 def full_reset_inventory(config: Config, *, include_hicc: bool = True) -> dict[str, object]:
     """Preview exact state paths, without reading credentials or session contents."""
     from .legacy_cutover import legacy_inventory

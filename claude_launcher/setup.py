@@ -1,4 +1,4 @@
-"""Initialize a private route and archive old local Claude state by default."""
+"""Initialize or reuse a private route without resetting any Claude state."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import Config
+from .install import installation_present
 from .wire import RouteError
 
 
@@ -30,13 +31,26 @@ def _private_parent(path: Path) -> None:
 
 
 def initialize_config(destination: Path, source: Path | None = None,
-                      prompt: Callable[[str], str] = input, *, keep_existing: bool = False,
+                      prompt: Callable[[str], str] = input, *, keep_existing: bool = True,
                       dry_run: bool = False, yes: bool = False) -> Config:
-    """Write a validated config exclusively; never overwrite an existing file."""
+    """Reuse valid state, create missing profile directories, never overwrite config.
+
+    keep_existing and yes remain accepted for compatibility; init always preserves data.
+    """
     destination = destination.expanduser().absolute()
-    if destination.exists() or destination.is_symlink():
-        raise RouteError("config_already_exists; use_--config_for_another_file")
-    if source is not None:
+    for path in (destination, *destination.parents):
+        if path.is_symlink():
+            raise RouteError("config_path_must_not_be_symlinked")
+    existing = destination.exists()
+    if existing:
+        info = destination.stat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) & 0o077):
+            raise RouteError("config_must_be_a_private_owned_file")
+        config = Config.load(destination)
+        if source is not None and Config.load(source.expanduser()) != config:
+            raise RouteError("config_already_exists_and_differs; existing_config_preserved")
+    elif source is not None:
         config = Config.load(source.expanduser())
     else:
         def ask(label: str, default: str = "") -> str:
@@ -70,47 +84,34 @@ def initialize_config(destination: Path, source: Path | None = None,
             config = Config.load(candidate)
     if not config.identity_file.is_file() or not config.known_hosts.is_file():
         raise RouteError("ssh_key_or_verified_known_hosts_missing")
-    from .lifecycle import (
-        archive_for_initialization, confirm_operation, initialization_inventory,
-    )
-
-    inventory = initialization_inventory(config) if not keep_existing else {
-        "archive_paths": [], "existing_state_preserved": True,
-    }
-    if not keep_existing:
-        from .legacy_cutover import LEGACY_ITEMS
-
-        targets = [Path.home() / path for name, path in LEGACY_ITEMS.items()
-                   if name != "hicc-home"] + [config.profile_home]
-        if any(destination.is_relative_to(path) for path in targets):
-            raise RouteError("config_path_inside_archive_target; choose_a_separate_private_directory")
-        for protected in (config.identity_file, config.known_hosts):
-            if any(protected.resolve().is_relative_to(path) for path in targets):
-                raise RouteError("ssh_material_inside_archive_target; move_it_or_use_--keep-existing")
-    print(json.dumps({"config_path": str(destination), **inventory}, indent=2))
+    if destination.is_relative_to(config.profile_home):
+        raise RouteError("config_must_stay_outside_claude_profile")
+    installed = installation_present(config)
+    print(json.dumps({"config_path": str(destination), "config_reused": existing,
+                      "profile_present": config.profile_home.is_dir(),
+                      "claude_installed": installed, "existing_state_preserved": True,
+                      "archive_paths": []}, indent=2))
     if dry_run:
         return config
-    if not keep_existing:
-        if inventory["process_running"]:
-            raise RouteError("claude_or_hicc_still_running; close_sessions_before_init")
-        if inventory["archive_paths"]:
-            confirm_operation("Archive this old Claude state and create a fresh profile?",
-                              yes=yes, prompt=prompt)
+    if existing:
+        config.profile_home.mkdir(parents=True, mode=0o700, exist_ok=True)
+        return config
     _private_parent(destination)
     payload = asdict(config)
     for name in ("identity_file", "known_hosts", "texlive_root"):
         if payload[name] is not None:
             payload[name] = str(payload[name])
-    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                             | os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        # Another init may have finished while the wizard was open. Revalidate it.
+        reused = initialize_config(destination, source, prompt, dry_run=dry_run)
+        if reused != config:
+            raise RouteError("config_already_exists_and_differs; existing_config_preserved")
+        return reused
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
         json.dump(payload, stream, indent=2)
         stream.write("\n")
-    if not keep_existing:
-        try:
-            archives = archive_for_initialization(config)
-        except (RouteError, OSError):
-            # Keep archives on partial failure, but never advertise a ready route.
-            destination.unlink()
-            raise
-        print(json.dumps(archives, indent=2))
+    config.profile_home.mkdir(parents=True, mode=0o700, exist_ok=True)
     return config

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,7 @@ from .observe import observe_hicc
 from .profile_reset import full_reset_inventory, reset_local_state, reset_profile
 from .onboarding import complete_authenticated_onboarding
 from .setup import default_config_path, initialize_config
+from .sessions import SessionLease, list_sessions, maintenance_barrier, stop_session
 from .runner import (
     ENTRY_DIR, RuntimeEgressMonitor, SSHTunnel, egress_check, receipt, run_supervised,
     sandbox_command, ssh_arguments,
@@ -48,7 +50,8 @@ def namespace_available() -> bool:
         return False
 
 
-def doctor(config: Config | None, connect: bool, hicc: bool = False) -> int:
+def doctor(config: Config | None, connect: bool, hicc: bool = False,
+           report: Path | None = None) -> int:
     checks = {
         "ssh_installed": shutil.which("ssh") is not None,
         "system_python_compatible": system_python_compatible(),
@@ -58,6 +61,7 @@ def doctor(config: Config | None, connect: bool, hicc: bool = False) -> int:
         "config_loaded": config is not None,
         "live_account_files_read": False,
         "network_probe_executed": connect,
+        "launcher_version": __version__,
     }
     if config is not None:
         executable = config.claude_executable
@@ -103,19 +107,21 @@ def doctor(config: Config | None, connect: bool, hicc: bool = False) -> int:
     if connect:
         if config is None:
             raise RouteError("connect_requires_config")
-        with tempfile.TemporaryDirectory(prefix="claude-route-") as directory:
-            tunnel = SSHTunnel(config, Path(directory) / "proxy.sock")
-            try:
-                tunnel.start()
-                reason = egress_check(config, tunnel.socket_path)
-                checks["configured_egress_matches"] = reason is None
-                checks["route_result"] = reason or "configured_ip_and_country_match"
-            finally:
-                tunnel.dispose()
-        print(json.dumps(checks, indent=2))
-        return 0 if ready and checks["configured_egress_matches"] else 69
+        from .diagnostics import connect_diagnostics
+
+        if ready:
+            checks.update(connect_diagnostics(config))
+        else:
+            checks.update(configured_egress_matches=False, network_probe_executed=False,
+                          route_result="local_dependencies_unavailable")
+    if report is not None:
+        if hicc:
+            raise RouteError("support_report_cannot_include_hicc_observation")
+        from .management import private_json
+
+        private_json(report.expanduser().absolute(), checks)
     print(json.dumps(checks, indent=2))
-    return 0 if ready else 69
+    return 0 if ready and (not connect or checks["configured_egress_matches"]) else 69
 
 
 def system_python_compatible() -> bool:
@@ -133,6 +139,13 @@ def system_python_compatible() -> bool:
 def launch(config: Config, workspace: Path, arguments: list[str], install: bool = False,
            login: bool = False, safe_mode: bool = False,
            verify_after: bool = False, skills_mode: bool = False) -> int:
+    if install:
+        from .install import installation_present
+
+        if installation_present(config):
+            print("vps-route: Claude is already installed; kept unchanged. "
+                  "Use vps-route update to upgrade.")
+            return 0
     operation = "install" if install else "run"
     if arguments[:1] == ["auth"] and arguments[1:2] in (["login"], ["status"]):
         operation = "auth_" + arguments[1]
@@ -142,9 +155,19 @@ def launch(config: Config, workspace: Path, arguments: list[str], install: bool 
         operation = "version"
     audit = AuditLog(operation, config.timezone)
     audit.write("start")
+    previous_term = signal.getsignal(signal.SIGTERM)
+
+    def cancelled(_number: int, _frame: object) -> None:
+        # Also clean up SSH when stop is requested during preflight/post-update,
+        # before/after run_supervised installs its own terminal signal handlers.
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, cancelled)
     try:
-        return _launch(config, workspace, arguments, audit, install=install, login=login,
-                       safe_mode=safe_mode, verify_after=verify_after, skills_mode=skills_mode)
+        with maintenance_barrier(exclusive=install), \
+                SessionLease(audit.run_id, config.profile, operation):
+            return _launch(config, workspace, arguments, audit, install=install, login=login,
+                           safe_mode=safe_mode, verify_after=verify_after, skills_mode=skills_mode)
     except RouteError as exc:
         audit.exit_code, audit.reason = 69, str(exc)
         raise
@@ -155,6 +178,7 @@ def launch(config: Config, workspace: Path, arguments: list[str], install: bool 
         audit.exit_code, audit.reason = 130, "interrupted"
         raise
     finally:
+        signal.signal(signal.SIGTERM, previous_term)
         try:
             audit.write("exit")
         except (OSError, RouteError):
@@ -165,6 +189,14 @@ def launch(config: Config, workspace: Path, arguments: list[str], install: bool 
 def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditLog,
             install: bool = False, login: bool = False, safe_mode: bool = False,
             verify_after: bool = False, skills_mode: bool = False) -> int:
+    if install:
+        from .install import installation_present
+
+        if installation_present(config):
+            print("vps-route: Claude is already installed; kept unchanged. "
+                  "Use vps-route update to upgrade.")
+            audit.exit_code, audit.reason = 0, "already_installed"
+            return 0
     if not namespace_available():
         raise RouteError("network_isolation_unavailable")
     if not system_python_compatible():
@@ -305,13 +337,14 @@ def main() -> int:
     parser.add_argument("--config", type=Path)
     subparsers = parser.add_subparsers(dest="action", required=True)
     initialize = subparsers.add_parser(
-        "init", help="archive old local Claude state and create private config; no login",
+        "init", help="create or reuse private config and profile; never reset account state",
     )
     initialize.add_argument("--from-file", type=Path, help="import a validated connection config")
     initialize.add_argument("--keep-existing", action="store_true",
-                            help="create config only; do not archive existing Claude state")
+                            help="compatibility option; init always preserves existing state")
     initialize.add_argument("--dry-run", action="store_true", help="preview without writing or moving")
-    initialize.add_argument("-y", "--yes", action="store_true", help="skip archive confirmation only")
+    initialize.add_argument("-y", "--yes", action="store_true",
+                            help="compatibility option; init never resets existing state")
     uninstall = subparsers.add_parser(
         "uninstall", help="permanently remove local profiles, backups, logs, config and package",
     )
@@ -325,6 +358,29 @@ def main() -> int:
     inspect = subparsers.add_parser("doctor", help="offline checks; optional VPS route probe")
     inspect.add_argument("--connect", action="store_true")
     inspect.add_argument("--observe-hicc", action="store_true", help="passive same-user socket metadata")
+    inspect.add_argument("--report", type=Path, help="write private sanitized JSON; no account contents")
+    configuration = subparsers.add_parser("config", help="view, validate or explicitly edit route config")
+    config_commands = configuration.add_subparsers(dest="config_action", required=True)
+    show = config_commands.add_parser("show", help="redacted values by default")
+    show.add_argument("--reveal", action="store_true", help="show local endpoint/path values")
+    config_commands.add_parser("validate", help="offline syntax and policy check; no login or network")
+    edit = config_commands.add_parser("set", help="preview one change; --apply writes atomically")
+    edit.add_argument("key")
+    edit.add_argument("value", help="string, JSON number, true/false, or null")
+    edit.add_argument("--apply", action="store_true")
+    subparsers.add_parser("status", help="list tracked tool-owned processes, not Claude conversation history")
+    sessions = subparsers.add_parser("sessions", help="list or safely stop one tracked tool process")
+    session_commands = sessions.add_subparsers(dest="sessions_action", required=True)
+    session_commands.add_parser("list")
+    stop = session_commands.add_parser("stop")
+    stop.add_argument("run_id", help="exact run_id printed by status; never an arbitrary PID")
+    stop.add_argument("--apply", action="store_true", help="request graceful stop; default previews")
+    subparsers.add_parser("server-version", help="read VPS service protocol/version; never deploys")
+    self_upgrade = subparsers.add_parser("self-update", help="manual launcher update from official releases")
+    self_upgrade.add_argument("--to", metavar="X.Y.Z", help="select a formal published release")
+    self_upgrade.add_argument("--rollback", action="store_true", help="restore previous launcher code only")
+    self_upgrade.add_argument("--apply", action="store_true", help="update only while all sessions are idle")
+    self_upgrade.add_argument("--check", action="store_true", help="check/preview only (the default)")
     logs = subparsers.add_parser("logs", help="read private operational logs; no accounts or prompts")
     logs.add_argument("--tail", type=int, default=20)
     shell = subparsers.add_parser("shell", help="open an interactive VPS SSH shell")
@@ -341,11 +397,16 @@ def main() -> int:
     auth = subparsers.add_parser("auth", help="authentication in the separate profile only")
     auth.add_argument("operation", choices=["login", "status", "reset"])
     auth.add_argument("--text", action="store_true", help="forward --text for auth status")
+    auth.add_argument("--apply", action="store_true", help="auth reset only: archive after confirmation")
+    auth.add_argument("--dry-run", action="store_true", help="auth reset only: preview without changes")
+    auth.add_argument("-y", "--yes", action="store_true", help="auth reset only: skip confirmation")
     reset = subparsers.add_parser(
         "reset", help="preview full local-state reset; --apply archives and reinstalls via VPS",
     )
     reset.add_argument("--apply", action="store_true", help="archive old state and create fresh state")
     reset.add_argument("--no-install", action="store_true", help="leave fresh profile uninstalled")
+    reset.add_argument("--dry-run", action="store_true", help="preview without moving/installing")
+    reset.add_argument("-y", "--yes", action="store_true", help="skip confirmation, not safety checks")
     subparsers.add_parser("native-version", help="show the isolated official Claude CLI version")
     installer = subparsers.add_parser("install", help="official latest install into a separate home")
     installer.add_argument("--workspace", type=Path)
@@ -360,13 +421,20 @@ def main() -> int:
     try:
         if args.action == "init":
             path = args.config or default_config_path()
-            initialize_config(path, args.from_file, keep_existing=args.keep_existing,
-                              dry_run=args.dry_run, yes=args.yes)
+            config = initialize_config(path, args.from_file, keep_existing=args.keep_existing,
+                                       dry_run=args.dry_run, yes=args.yes)
             if args.dry_run:
                 print("Preview only; no configuration or account state changed.")
                 return 0
-            print(f"Private config created: {path}")
-            print("Next: vps-route setup-vps --apply (or use an existing CONNECT service)")
+            print(f"Private config ready (existing state preserved): {path}")
+            from .install import installation_present
+
+            if installation_present(config):
+                print("Claude already installed. Next: vps-route auth status --text, "
+                      "then vps-route run")
+            else:
+                print("Claude not installed. Next: vps-route setup-vps --apply "
+                      "(only for a new VPS service), then vps-route install")
             return 0
         if args.action == "uninstall":
             from .lifecycle import uninstall_inventory, uninstall_local
@@ -382,10 +450,32 @@ def main() -> int:
         if args.action == "logs":
             print(log_tail(args.tail))
             return 0
+        if args.action in {"status", "sessions"}:
+            if args.action == "sessions" and args.sessions_action == "stop":
+                if args.apply:
+                    result = stop_session(args.run_id)
+                else:
+                    matches = [item for item in list_sessions() if item["run_id"] == args.run_id]
+                    if not matches:
+                        raise RouteError("session_not_found")
+                    result = {"session": matches[0], "apply_required": True}
+            else:
+                result = {"sessions": list_sessions(),
+                          "scope": "processes_started_after_tracking_was_enabled"}
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.action == "self-update":
+            from .updates import self_update
+
+            if args.check and args.apply:
+                raise RouteError("check_and_apply_are_mutually_exclusive")
+            print(json.dumps(self_update(version=args.to, apply=args.apply,
+                                         rollback=args.rollback), indent=2))
+            return 0
         path = args.config or default_config_path()
         config = Config.load(path) if args.config or path.exists() else None
         if args.action == "doctor":
-            return doctor(config, args.connect, args.observe_hicc)
+            return doctor(config, args.connect, args.observe_hicc, args.report)
         if args.action in {"legacy-archive", "cutover-activate"}:
             from .legacy_cutover import (
                 activate_wrapper, activation_inventory, archive_legacy_state, legacy_inventory,
@@ -407,6 +497,29 @@ def main() -> int:
             return 0
         if config is None:
             raise RouteError("config_required; run_vps-route_init")
+        if args.action == "install":
+            from .install import installation_present
+
+            if installation_present(config):
+                # Do not even create the maintenance workspace for a no-op install.
+                return launch(config, config.profile_home, [], install=True, verify_after=True)
+        if args.action == "config":
+            from .management import config_values, set_config
+
+            if args.config_action == "show":
+                result = config_values(config, reveal=args.reveal)
+            elif args.config_action == "validate":
+                result = {"valid": True, "account_files_read": False, "network_probe_executed": False}
+            else:
+                result = set_config(path, args.key, args.value, apply=args.apply)
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.action == "server-version":
+            from .diagnostics import inspect_server
+
+            result = inspect_server(config)
+            print(json.dumps(result, indent=2))
+            return 0 if result["compatible"] is True else 69
         if args.action == "setup-vps":
             if not args.apply:
                 print(json.dumps({"apply_required": True, "service": "vps-route-connect.service",
@@ -425,10 +538,17 @@ def main() -> int:
                 command.extend(["-o", "PubkeyAuthentication=no"])
             return subprocess.call([*command, config.ssh_host])
         if args.action == "reset":
+            if args.apply and args.dry_run:
+                raise RouteError("dry_run_and_apply_are_mutually_exclusive")
             if not args.apply:
                 print(json.dumps(full_reset_inventory(config), indent=2))
                 return 0
-            result = reset_local_state(config)
+            from .lifecycle import confirm_operation
+
+            print(json.dumps(full_reset_inventory(config), indent=2))
+            confirm_operation("Archive old local state and create a fresh profile?", yes=args.yes)
+            with maintenance_barrier(exclusive=True):
+                result = reset_local_state(config)
             print(json.dumps(result, indent=2), flush=True)
             if args.no_install:
                 print("fresh state ready; run vps-route install before login")
@@ -440,7 +560,21 @@ def main() -> int:
                 print("fresh state and CLI ready; not logged in; next: vps-route auth login")
             return code
         if args.action == "auth" and args.operation == "reset":
-            archive = reset_profile(config)
+            from .profile_reset import profile_reset_inventory
+            from .lifecycle import confirm_operation
+
+            if args.text or (args.apply and args.dry_run):
+                raise RouteError("invalid_auth_reset_options")
+            inventory = profile_reset_inventory(config)
+            print(json.dumps(inventory, indent=2))
+            if not args.apply:
+                return 0
+            if inventory["profile_process_running"]:
+                raise RouteError("profile_process_running")
+            confirm_operation("Archive this isolated profile and create a blank replacement?",
+                              yes=args.yes)
+            with maintenance_barrier(exclusive=True):
+                archive = reset_profile(config)
             if archive is None:
                 print("fresh profile created; no previous tool profile was present")
             else:
@@ -452,6 +586,8 @@ def main() -> int:
         if args.action == "native-version":
             return launch(config, private_workspace(config), ["--version"])
         if args.action == "auth":
+            if args.apply or args.dry_run or args.yes:
+                raise RouteError("reset_options_only_valid_for_auth_reset")
             if args.text and args.operation != "status":
                 raise RouteError("auth_text_only_valid_for_status")
             # Login cannot read project-level hooks or MCP settings.
@@ -477,6 +613,10 @@ def main() -> int:
                       verify_after=args.action in {"install", "update"})
     except RouteError as exc:
         print(f"claude-launcher: {exc}")
+        from .diagnostics import HINTS
+
+        if str(exc) in HINTS:
+            print(f"hint: {HINTS[str(exc)]}")
         return 69
     except OSError:
         print("claude-launcher: local_operation_failed")

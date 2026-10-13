@@ -6,6 +6,7 @@ import argparse
 import errno
 import fcntl
 import ipaddress
+import json
 import os
 import signal
 import socket
@@ -13,7 +14,8 @@ import socketserver
 import stat
 from pathlib import Path
 
-from .wire import RouteError, read_header, relay
+from . import __version__
+from .wire import PROTOCOL_VERSION, RouteError, read_header, relay
 
 
 def public_target(authority: str) -> list[tuple[int, int, int, tuple]]:
@@ -24,7 +26,10 @@ def public_target(authority: str) -> list[tuple[int, int, int, tuple]]:
     host = host.removeprefix("[").removesuffix("]")
     if any(ord(c) <= 32 for c in host):
         raise RouteError("connect_target_rejected")
-    resolved = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    try:
+        resolved = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        raise RouteError("target_resolution_failed") from None
     addresses = []
     for family, kind, protocol, _, address in resolved:
         ip = ipaddress.ip_address(address[0])
@@ -46,6 +51,13 @@ class ConnectHandler(socketserver.BaseRequestHandler):
             self.request.settimeout(10)
             line = read_header(self.request).split(b"\r\n", 1)[0].decode("ascii")
             parts = line.split()
+            if parts == ["GET", "/vps-route-health", "HTTP/1.1"]:
+                body = json.dumps({"version": __version__, "protocol": PROTOCOL_VERSION}).encode()
+                self.request.sendall(
+                    f"HTTP/1.1 200 OK\r\nContent-Length: {len(body)}\r\n"
+                    "Connection: close\r\n\r\n".encode() + body
+                )
+                return
             if (
                 len(parts) != 3 or parts[0] != "CONNECT"
                 or parts[2] not in {"HTTP/1.0", "HTTP/1.1"}
@@ -65,11 +77,17 @@ class ConnectHandler(socketserver.BaseRequestHandler):
             self.request.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             established = True
             relay(self.request, upstream)
-        except (OSError, ValueError, RouteError):
+        except (OSError, ValueError, RouteError) as exc:
             if not established:
+                # Fixed reason codes only: never expose hosts, exception text, or traffic.
+                reason = str(exc) if isinstance(exc, RouteError) else "upstream_unavailable"
+                if reason not in {"target_resolution_failed", "upstream_unavailable",
+                                  "connect_target_rejected", "nonpublic_target_rejected"}:
+                    reason = "connect_target_rejected"
                 try:
                     self.request.sendall(
-                        b"HTTP/1.1 502 Tunnel Unavailable\r\nContent-Length: 0\r\n\r\n"
+                        ("HTTP/1.1 502 Tunnel Unavailable\r\nContent-Length: 0\r\n"
+                         f"X-VPS-Route-Error: {reason}\r\n\r\n").encode()
                     )
                 except OSError:
                     pass

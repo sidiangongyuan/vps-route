@@ -16,3 +16,5 @@ build/
 dist/
 *.egg-info/
 .release-venv/
+.release-notes/
+my-route.json
