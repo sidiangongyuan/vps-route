@@ -23,7 +23,8 @@ Private example values are masked as xxx and must be replaced before use.
   not the host network. Host proxy environment variables are not inherited.
 - Exposes a fixed proxy address inside each isolated invocation:
   http://127.0.0.1:17878. It is not a host-wide listener.
-- Terminates its own Claude process tree when its SSH tunnel exits.
+- Terminates its own Claude process tree when its SSH tunnel exits, the verified
+  exit changes, or runtime egress probes repeatedly fail.
 - Keeps Claude's installation, account, sessions, and memory in an independent
   user-owned profile. Your existing installation is not replaced.
 - Supports the official latest installer and official update command through
@@ -31,9 +32,19 @@ Private example values are masked as xxx and must be replaced before use.
 - Records compact private startup/exit metadata, not prompts, terminal output,
   login URLs, authorization codes, or account tokens.
 
-Runtime supervision checks **SSH process liveness**, not periodic exit-IP
-reputation or IP changes. A silent upstream failure can make requests fail
-without terminating the CLI. The namespace still supplies no direct IP route.
+Runtime supervision checks SSH process liveness continuously and checks the
+configured HTTPS exit-IP endpoint through the same SSH route every 30 seconds.
+A confirmed IP/country mismatch closes the owned route and terminates Claude
+as soon as it is detected; other probe failures require two consecutive failures
+by default. A successful check resets that count. A failed probe cannot distinguish
+an upstream outage from an unavailable probe website; both eventually stop Claude.
+There is no reputation test, automatic restart, exit switching, or direct fallback.
+The namespace supplies no direct IP route, including during the failure grace period.
+With the defaults, persistent failure is normally detected within about 76 seconds
+(two intervals plus two 8-second probe deadlines). Existing config files can set
+`runtime_probe_interval_seconds` (5–300) and `runtime_probe_failures` (1–10).
+Existing sessions must be restarted to enable this monitor; their terminal windows
+are not closed by the launcher when it terminates the owned Claude process tree.
 
 ## Requirements
 

@@ -284,8 +284,16 @@ vps-route init --from-file ./my-route.json
 | texlive_root | 本机 TeX Live 安装根目录 | 不使用时 null；填写包含 bin 和 texmf-dist 的根目录，不是 bin 子目录 |
 | research_filesystem | 是否扩大可访问的本机文件范围 | 默认 false；仅可信项目考虑 true，见安全说明 |
 | probe_url | 出口检测接口 | 默认 https://ipinfo.io/json；自定义接口需返回 ip/country，使用 HTTPS 443 |
-| interval_seconds | 可选诊断探测间隔参数 | 默认 5；日常启动不持续查询出口 IP |
+| interval_seconds | 可选诊断探测间隔参数 | 默认 5；不控制日常运行期出口检测 |
 | timeout_seconds | 连接和出口检测等待时间 | 默认 8 秒 |
+| runtime_probe_interval_seconds | 运行期间出口检查间隔 | 默认 30 秒；范围 5–300，每次使用相同 SSH 链路 |
+| runtime_probe_failures | 普通出口检查失败的连续次数 | 默认 2；范围 1–10，成功后归零；确认 IP/国家变化时不等待此次数 |
+
+运行期间 SSH 断开会结束工具启动的 Claude；住宅代理等上游故障由定期出口检查
+发现，连续失败达到配置次数也会关闭通道并结束该 Claude 进程树，不关闭终端窗口。
+默认参数下，持续故障通常在约 76 秒内被发现（两次间隔和两次 8 秒检测等待）。
+检测网站自身不可用也可能导致退出，并非精确的供应商故障判定。期间始终禁止直连，
+不自动重启、不切换出口、不重新授权。旧会话需正常退出再启动，才能使用新检测逻辑。
 
 ## 7. 部署 VPS 端服务并检查
 

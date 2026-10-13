@@ -27,6 +27,8 @@ SAFE_REASONS = {
     "updated_binary_unusable", "update_verification_route_failed", "operation_failed",
     "interrupted",
     "system_python_3_10_required",
+    "proxy_socket_unavailable", "proxy_connect_rejected", "probe_transport_failure",
+    "probe_http_failure", "probe_invalid_json", "probe_response_too_large",
 }
 
 

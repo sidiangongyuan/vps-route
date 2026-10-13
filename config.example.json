@@ -12,6 +12,8 @@
   "probe_url": "https://ipinfo.io/json",
   "interval_seconds": 5,
   "timeout_seconds": 8,
+  "runtime_probe_interval_seconds": 30,
+  "runtime_probe_failures": 2,
   "ssh_http_proxy": null,
   "texlive_root": null,
   "research_filesystem": false

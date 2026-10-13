@@ -45,6 +45,12 @@ class AuditTests(unittest.TestCase):
         self.assertNotIn("private token", log_tail())
         self.assertEqual(json.loads(log_tail())["reason"], "operation_failed")
 
+    def test_runtime_upstream_failure_reason_is_retained(self):
+        audit = AuditLog("run", None)
+        audit.exit_code, audit.reason = 69, "probe_transport_failure"
+        audit.write("exit")
+        self.assertEqual(json.loads(log_tail())["reason"], "probe_transport_failure")
+
     def test_logs_rotate_without_dropping_current_record(self):
         with patch("claude_launcher.audit.LOG_LIMIT", 1):
             for _ in range(7):

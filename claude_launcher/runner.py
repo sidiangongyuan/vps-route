@@ -318,7 +318,7 @@ def run_supervised(
     input_fd: int | None = None,
     output_fd: int | None = None,
 ) -> tuple[int, str]:
-    """Monitor SSH liveness; optionally run a probe for diagnostic callers."""
+    """Monitor SSH liveness and the supplied upstream/exit check independently."""
     input_fd = sys.stdin.fileno() if input_fd is None else input_fd
     output_fd = sys.stdout.fileno() if output_fd is None else output_fd
     failure: list[str] = []
@@ -483,6 +483,28 @@ def egress_check(config: Config, socket_path: Path) -> str | None:
         return outcome.get(timeout=config.timeout_seconds)
     except queue.Empty:
         return "egress_check_timeout"
+
+
+class RuntimeEgressMonitor:
+    """Debounce probe failures, never tolerate a confirmed changed exit."""
+
+    def __init__(self, config: Config, socket_path: Path) -> None:
+        self.config = config
+        self.socket_path = socket_path
+        self.consecutive_failures = 0
+
+    def __call__(self) -> str | None:
+        reason = egress_check(self.config, self.socket_path)
+        if reason is None:
+            self.consecutive_failures = 0
+            return None
+        if reason in {"egress_ip_changed", "egress_country_changed"}:
+            return reason
+        self.consecutive_failures += 1
+        if self.consecutive_failures >= self.config.runtime_probe_failures:
+            return reason
+        # The network namespace remains fail-closed during this grace period.
+        return None
 
 
 def receipt(profile_home: Path, code: int, reason: str) -> None:

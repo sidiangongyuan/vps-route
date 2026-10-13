@@ -1,5 +1,6 @@
-"""Startup-only egress checks and terminal cleanup, without live accounts/network."""
+"""Runtime egress checks and terminal cleanup, without live accounts/network."""
 
+from dataclasses import replace
 import os
 import json
 import pty
@@ -13,12 +14,12 @@ from unittest.mock import patch
 
 from claude_launcher.cli import launch
 from claude_launcher.config import Config
-from claude_launcher.runner import TERMINAL_RESET, run_supervised
+from claude_launcher.runner import RuntimeEgressMonitor, TERMINAL_RESET, run_supervised
 from claude_launcher.wire import RouteError
 
 
 class RuntimePolicyTests(unittest.TestCase):
-    def test_launch_checks_each_new_route_but_passes_no_runtime_probe(self):
+    def test_launch_checks_each_new_route_and_enables_runtime_monitor(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             config = Config("203.0.113.1", "fixture", 22, home / "key", home / "hosts",
@@ -40,8 +41,10 @@ class RuntimePolicyTests(unittest.TestCase):
                         self.assertEqual(launch(config, home, ["--version"],
                                                 verify_after=verify_after), 0)
                         self.assertEqual(probe.call_count, 2 if verify_after else 1)
-                        self.assertTrue(all(c.args[2] is None
-                                            for c in supervise.call_args_list))
+                        for call in supervise.call_args_list:
+                            self.assertIsInstance(call.args[2], RuntimeEgressMonitor)
+                            self.assertIs(call.args[2].config, config)
+                            self.assertEqual(call.args[5], 30)
 
                 with patch("claude_launcher.cli.namespace_available", return_value=True), \
                         patch("claude_launcher.cli.SSHTunnel"), \
@@ -58,6 +61,56 @@ class RuntimePolicyTests(unittest.TestCase):
                 failed_id = records[-1]["run_id"]
                 self.assertEqual([r["event"] for r in records if r["run_id"] == failed_id],
                                  ["start", "exit"])
+
+    def test_runtime_transport_failures_are_consecutive_and_recovery_resets_count(self):
+        config = Config("203.0.113.1", "fixture", 22, Path("key"), Path("hosts"),
+                        "/unused", "203.0.113.2", "US")
+        monitor = RuntimeEgressMonitor(config, Path("fixture.sock"))
+        with patch("claude_launcher.runner.egress_check", side_effect=[
+            "egress_check_timeout", None, "probe_transport_failure", "probe_transport_failure",
+        ]):
+            self.assertIsNone(monitor())
+            self.assertEqual(monitor.consecutive_failures, 1)
+            self.assertIsNone(monitor())
+            self.assertEqual(monitor.consecutive_failures, 0)
+            self.assertIsNone(monitor())
+            self.assertEqual(monitor(), "probe_transport_failure")
+
+    def test_runtime_changed_exit_is_immediate_and_failure_limit_is_configurable(self):
+        config = Config("203.0.113.1", "fixture", 22, Path("key"), Path("hosts"),
+                        "/unused", "203.0.113.2", "US", runtime_probe_failures=10)
+        for reason in ("egress_ip_changed", "egress_country_changed"):
+            with self.subTest(reason=reason), \
+                    patch("claude_launcher.runner.egress_check", return_value=reason):
+                self.assertEqual(RuntimeEgressMonitor(config, Path("fixture.sock"))(), reason)
+        with patch("claude_launcher.runner.egress_check", return_value="probe_http_failure"):
+            monitor = RuntimeEgressMonitor(replace(config, runtime_probe_failures=1),
+                                           Path("fixture.sock"))
+            self.assertEqual(monitor(), "probe_http_failure")
+
+    def test_old_config_defaults_and_runtime_policy_validation(self):
+        values = {
+            "ssh_host": "203.0.113.1", "ssh_user": "fixture", "ssh_port": 22,
+            "identity_file": "/fixture/key", "known_hosts": "/fixture/hosts",
+            "remote_socket": "/unused", "expected_ip": "8.8.8.8", "expected_country": "US",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(values))
+            config = Config.load(path)
+            self.assertEqual(config.runtime_probe_interval_seconds, 30)
+            self.assertEqual(config.runtime_probe_failures, 2)
+            for field, value in [
+                ("runtime_probe_interval_seconds", 0), ("runtime_probe_interval_seconds", 301),
+                ("runtime_probe_interval_seconds", True),
+                ("runtime_probe_interval_seconds", float("nan")),
+                ("runtime_probe_failures", 0), ("runtime_probe_failures", 11),
+                ("runtime_probe_failures", 1.5), ("runtime_probe_failures", True),
+            ]:
+                with self.subTest(field=field, value=value):
+                    path.write_text(json.dumps({**values, field: value}))
+                    with self.assertRaisesRegex(RouteError, "invalid_or_unreadable_config"):
+                        Config.load(path)
 
     def test_namespace_failure_is_logged_before_any_ssh_connection(self):
         with tempfile.TemporaryDirectory() as directory:

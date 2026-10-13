@@ -31,6 +31,8 @@ class Config:
     texlive_root: Path | None = None
     research_filesystem: bool = False
     timezone: str | None = None
+    runtime_probe_interval_seconds: float = 30.0
+    runtime_probe_failures: int = 2
 
     @property
     def profile_home(self) -> Path:
@@ -77,6 +79,13 @@ class Config:
             if not 1 <= config.ssh_port <= 65535:
                 raise ValueError
             if not 1 <= config.interval_seconds <= 60 or not 1 <= config.timeout_seconds <= 30:
+                raise ValueError
+            if (isinstance(config.runtime_probe_interval_seconds, bool)
+                    or not isinstance(config.runtime_probe_interval_seconds, (int, float))
+                    or not 5 <= config.runtime_probe_interval_seconds <= 300
+                    or isinstance(config.runtime_probe_failures, bool)
+                    or not isinstance(config.runtime_probe_failures, int)
+                    or not 1 <= config.runtime_probe_failures <= 10):
                 raise ValueError
             if config.ssh_http_proxy is not None:
                 bootstrap = urlsplit(config.ssh_http_proxy)

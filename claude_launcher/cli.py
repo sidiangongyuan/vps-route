@@ -21,7 +21,7 @@ from .profile_reset import full_reset_inventory, reset_local_state, reset_profil
 from .onboarding import complete_authenticated_onboarding
 from .setup import default_config_path, initialize_config
 from .runner import (
-    ENTRY_DIR, SSHTunnel, egress_check, receipt, run_supervised,
+    ENTRY_DIR, RuntimeEgressMonitor, SSHTunnel, egress_check, receipt, run_supervised,
     sandbox_command, ssh_arguments,
 )
 from .wire import RouteError
@@ -91,6 +91,9 @@ def doctor(config: Config | None, connect: bool, hicc: bool = False) -> int:
             "isolated_timezone_source": "process_override" if config.timezone else "host_system_default",
             "isolated_timezone": config.timezone,
             "research_filesystem_enabled": config.research_filesystem,
+            "runtime_egress_monitor_enabled": True,
+            "runtime_probe_interval_seconds": config.runtime_probe_interval_seconds,
+            "runtime_probe_failures": config.runtime_probe_failures,
         })
     if hicc:
         checks["hicc_passive_snapshot"] = observe_hicc()
@@ -209,9 +212,9 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
             )
             code, reason = run_supervised(
                 command, environment,
-                None,  # Startup already checked egress; runtime monitors SSH only.
+                RuntimeEgressMonitor(config, tunnel.socket_path),
                 tunnel.close, tunnel.alive,
-                config.interval_seconds,
+                config.runtime_probe_interval_seconds,
             )
             if login and code == 0:
                 complete_authenticated_onboarding(profile_home, executable)
@@ -235,9 +238,9 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                             )
                             verify_code, _ = run_supervised(
                                 verify_command, verify_environment,
-                                None,
+                                RuntimeEgressMonitor(config, verify_tunnel.socket_path),
                                 verify_tunnel.close, verify_tunnel.alive,
-                                config.interval_seconds,
+                                config.runtime_probe_interval_seconds,
                             )
                             if verify_code:
                                 code, reason = 69, "updated_binary_unusable"

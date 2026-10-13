@@ -21,7 +21,8 @@ from unittest.mock import patch
 from claude_launcher.config import Config
 from claude_launcher.remote import ConnectHandler, ConnectServer, public_target
 from claude_launcher.runner import (
-    SSH_KEEPALIVE_OPTIONS, egress_check, run_supervised, sandbox_command, ssh_arguments,
+    RuntimeEgressMonitor, SSH_KEEPALIVE_OPTIONS, egress_check, run_supervised,
+    sandbox_command, ssh_arguments,
 )
 from claude_launcher.wire import RouteError, proxy_json
 
@@ -143,6 +144,30 @@ class RouteIntegration(unittest.TestCase):
             public_target("127.0.0.1:443")
         with self.assertRaises(RouteError):
             public_target("127.0.0.1:22")
+
+    def test_repeated_upstream_failure_stops_owned_tree_even_while_ssh_is_alive(self):
+        marker = self.root / "upstream-surviving-child"
+        ready = self.root / "upstream-owned-child-ready"
+        config = Config("203.0.113.1", "fixture", 22, Path("unused"), Path("unused"),
+                        "/unused", "203.0.113.7", "US")
+        monitor = RuntimeEgressMonitor(config, self.socket_path)
+        unrelated = subprocess.Popen(["/bin/sleep", "10"])
+        try:
+            with patch("claude_launcher.runner.egress_check", side_effect=lambda *_:
+                       "probe_transport_failure" if ready.exists() else None):
+                # run_fixture deliberately keeps route_alive=True for this test.
+                code, reason, text = self.run_fixture(
+                    "sleep", monitor, [str(marker), str(ready)],
+                )
+            self.assertIn("SYNTHETIC_SESSION_READY", text)
+            self.assertEqual((code, reason), (69, "probe_transport_failure"))
+            self.assertEqual(monitor.consecutive_failures, 2)
+            self.assertIsNone(unrelated.poll())
+            time.sleep(1.6)
+            self.assertFalse(marker.exists(), "managed descendant survived upstream failure")
+        finally:
+            unrelated.terminate()
+            unrelated.wait()
 
     def test_05_missing_route_has_no_direct_fallback(self):
         with self.assertRaises(RouteError):
