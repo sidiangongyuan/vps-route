@@ -21,7 +21,7 @@ from unittest.mock import patch
 from claude_launcher.config import Config
 from claude_launcher.remote import ConnectHandler, ConnectServer, public_target
 from claude_launcher.runner import (
-    RuntimeEgressMonitor, SSH_KEEPALIVE_OPTIONS, egress_check, run_supervised,
+    RuntimeConnectivityMonitor, SSH_KEEPALIVE_OPTIONS, connectivity_check, run_supervised,
     sandbox_command, ssh_arguments,
 )
 from claude_launcher.wire import RouteError, proxy_json
@@ -31,8 +31,10 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class JsonHandler(http.server.BaseHTTPRequestHandler):
+    body = b'{"ip":"203.0.113.7","country":"US"}'
+
     def do_GET(self):
-        body = b'{"ip":"203.0.113.7","country":"US"}'
+        body = self.body
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -127,11 +129,11 @@ class RouteIntegration(unittest.TestCase):
         unrelated = subprocess.Popen(["/bin/sleep", "10"])
         try:
             code, reason, text = self.run_fixture(
-                "sleep", lambda: "egress_ip_changed" if ready.exists() else None,
+                "sleep", lambda: "connectivity_check_failed" if ready.exists() else None,
                 [str(marker), str(ready)],
             )
             self.assertIn("SYNTHETIC_SESSION_READY", text)
-            self.assertEqual((code, reason), (69, "egress_ip_changed"))
+            self.assertEqual((code, reason), (69, "connectivity_check_failed"))
             self.assertIsNone(unrelated.poll())
             time.sleep(1.6)
             self.assertFalse(marker.exists(), "managed descendant survived shutdown")
@@ -150,10 +152,10 @@ class RouteIntegration(unittest.TestCase):
         ready = self.root / "upstream-owned-child-ready"
         config = Config("203.0.113.1", "fixture", 22, Path("unused"), Path("unused"),
                         "/unused", "203.0.113.7", "US")
-        monitor = RuntimeEgressMonitor(config, self.socket_path)
+        monitor = RuntimeConnectivityMonitor(config, self.socket_path)
         unrelated = subprocess.Popen(["/bin/sleep", "10"])
         try:
-            with patch("claude_launcher.runner.egress_check", side_effect=lambda *_:
+            with patch("claude_launcher.runner.connectivity_check", side_effect=lambda *_:
                        "probe_transport_failure" if ready.exists() else None):
                 # run_fixture deliberately keeps route_alive=True for this test.
                 code, reason, text = self.run_fixture(
@@ -173,13 +175,28 @@ class RouteIntegration(unittest.TestCase):
         with self.assertRaises(RouteError):
             proxy_json(str(self.root / "missing.sock"), "https://probe.test/json")
 
-    def test_06_ip_and_country_failures_are_distinct(self):
+    def test_06_connectivity_never_requires_ip_country_or_json(self):
         cfg = Config("203.0.113.1", "fixture", 22, Path("unused"), Path("unused"),
-                     "/unused", "203.0.113.7", "US")
-        self.assertIsNone(cfg.judge({"ip": "203.0.113.7", "country": "US"}))
-        self.assertEqual(cfg.judge({"ip": "203.0.113.8", "country": "US"}), "egress_ip_changed")
-        self.assertEqual(cfg.judge({"ip": "203.0.113.7", "country": "JP"}), "egress_country_changed")
-        self.assertEqual(cfg.judge({}), "egress_ip_unknown")
+                     "/unused", "8.8.8.8", "JP",
+                     connectivity_urls=("https://probe.test/text",))
+        for body in (b'{"ip":"203.0.113.7","country":"US"}', b'not JSON'):
+            with self.subTest(body=body), patch.object(JsonHandler, "body", body), \
+                    patch("claude_launcher.remote.public_target", self.local_target), \
+                    patch("claude_launcher.wire.ssl.create_default_context",
+                          return_value=self.context):
+                self.assertIsNone(connectivity_check(cfg, self.socket_path))
+
+    def test_connectivity_uses_alternate_host_before_declaring_failure(self):
+        cfg = Config("203.0.113.1", "fixture", 22, Path("key"), Path("hosts"), "/unused")
+        with patch("claude_launcher.runner.proxy_reachable", side_effect=[
+            RouteError("probe_transport_failure"), None,
+        ]) as probe:
+            self.assertIsNone(connectivity_check(cfg, self.socket_path))
+            self.assertEqual([c.args[1] for c in probe.call_args_list],
+                             list(cfg.connectivity_urls))
+        with patch("claude_launcher.runner.proxy_reachable",
+                   side_effect=RouteError("proxy_socket_unavailable")):
+            self.assertEqual(connectivity_check(cfg, self.socket_path), "proxy_socket_unavailable")
 
     def test_07_native_symlink_update_inside_separate_profile(self):
         profile = self.root / "profile-update"
@@ -239,8 +256,8 @@ class RouteIntegration(unittest.TestCase):
             return {"ip": "203.0.113.7", "country": "US"}
 
         try:
-            with patch("claude_launcher.runner.proxy_json", blocked_probe):
-                self.assertEqual(egress_check(cfg, self.socket_path), "egress_check_timeout")
+            with patch("claude_launcher.runner.proxy_reachable", blocked_probe):
+                self.assertEqual(connectivity_check(cfg, self.socket_path), "connectivity_check_timeout")
                 self.assertFalse(done.is_set())
         finally:
             release.set()

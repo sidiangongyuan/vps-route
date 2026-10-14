@@ -32,6 +32,8 @@ SAFE_REASONS = {
     "probe_tls_failed", "probe_tls_certificate_failed", "upstream_unavailable",
     "target_resolution_failed", "connect_target_rejected", "nonpublic_target_rejected",
     "launcher_interrupted",
+    "connectivity_check_timeout", "connectivity_check_failed",
+    "ssh_forward_socket_changed", "unsafe_reconnect_directory",
 }
 
 
@@ -58,7 +60,16 @@ class AuditLog:
         self.exit_code = 69
         self.reason = "operation_failed"
 
-    def write(self, event: str, *, country: str | None = None) -> None:
+    def connection_check(self, results: list[dict]) -> None:
+        self.write("connectivity_check", check_results=results)
+
+    def connection_state(self, event: str, reason: str | None) -> None:
+        if event not in {"connection_lost", "connection_restored", "reconnect_blocked"}:
+            raise ValueError("invalid connection state")
+        self.write(event, connection_reason=reason)
+
+    def write(self, event: str, *, check_results: list[dict] | None = None,
+              connection_reason: str | None = None) -> None:
         root = log_directory()
         if root.is_symlink():
             raise RouteError("unsafe_audit_directory")
@@ -79,11 +90,24 @@ class AuditLog:
         }
         if event == "preflight_passed":
             payload.update(network_isolated=True, ssh_host_verified=True,
-                           egress_matches=True, country=country)
+                           connectivity_ok=True, exit_ip_pinning_enabled=False)
         if event == "exit":
             payload.update(exit_code=self.exit_code,
                            reason=self.reason if self.reason in SAFE_REASONS else "operation_failed",
                            duration_seconds=round(time.monotonic() - self.started, 3))
+        if event in {"connection_lost", "connection_restored", "reconnect_blocked"}:
+            payload.update(session_preserved=True, direct_fallback=False)
+            if connection_reason is not None:
+                payload["reason"] = (connection_reason if connection_reason in SAFE_REASONS
+                                     else "operation_failed")
+        if event == "connectivity_check" and check_results is not None:
+            payload["targets"] = [{
+                "target_index": int(item["target_index"]),
+                "reason": item["reason"] if item["reason"] in SAFE_REASONS | {
+                    "reachable", "pending",
+                } else "connectivity_check_failed",
+                "elapsed_seconds": round(float(item["elapsed_seconds"]), 3),
+            } for item in check_results[:4]]
         # Serialize append/rotation across simultaneous CLI sessions.
         lock = _private_file(root / ".lock", os.O_WRONLY | os.O_CREAT)
         try:

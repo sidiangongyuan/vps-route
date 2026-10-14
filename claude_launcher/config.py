@@ -22,8 +22,9 @@ class Config:
     identity_file: Path
     known_hosts: Path
     remote_socket: str
-    expected_ip: str
-    expected_country: str
+    # Retained only for callers using the old positional constructor. Never enforced.
+    expected_ip: str | None = None
+    expected_country: str | None = None
     profile: str = "default"
     probe_url: str = "https://ipinfo.io/json"
     interval_seconds: float = 5.0
@@ -34,6 +35,10 @@ class Config:
     timezone: str | None = None
     runtime_probe_interval_seconds: float = 30.0
     runtime_probe_failures: int = 2
+    connectivity_urls: tuple[str, ...] = (
+        "https://www.gstatic.com/generate_204",
+        "https://www.cloudflare.com/cdn-cgi/trace",
+    )
 
     @property
     def profile_home(self) -> Path:
@@ -59,13 +64,19 @@ class Config:
             values = dict(values)
             # Accept old config files while ignoring the retired browser worker.
             values.pop("browser_agent", None)
+            values.pop("expected_ip", None)
+            values.pop("expected_country", None)
+            if "connectivity_urls" in values:
+                urls = values["connectivity_urls"]
+                if not isinstance(urls, (list, tuple)) or not 1 <= len(urls) <= 4:
+                    raise ValueError
+                values["connectivity_urls"] = tuple(urls)
             values["identity_file"] = Path(values["identity_file"]).expanduser().absolute()
             values["known_hosts"] = Path(values["known_hosts"]).expanduser().absolute()
             if values.get("texlive_root") is not None:
                 values["texlive_root"] = Path(values["texlive_root"]).expanduser().absolute()
             config = cls(**values)
-            for name in ("ssh_host", "ssh_user", "remote_socket", "expected_ip",
-                         "expected_country", "profile", "probe_url"):
+            for name in ("ssh_host", "ssh_user", "remote_socket", "profile", "probe_url"):
                 if not isinstance(getattr(config, name), str):
                     raise ValueError
             if not isinstance(config.research_filesystem, bool):
@@ -76,16 +87,11 @@ class Config:
                 ZoneInfo(config.timezone)
             # Numeric bootstrap address avoids local DNS for the SSH destination.
             ipaddress.ip_address(config.ssh_host)
-            expected = ipaddress.ip_address(config.expected_ip)
-            if not expected.is_global:
-                raise ValueError
             if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_-]{0,63}", config.ssh_user):
                 raise ValueError
             if not re.fullmatch(r"/[a-zA-Z0-9_./-]+", config.remote_socket):
                 raise ValueError
             if ".." in Path(config.remote_socket).parts:
-                raise ValueError
-            if not re.fullmatch(r"[A-Z]{2}", config.expected_country):
                 raise ValueError
             if not re.fullmatch(r"[a-zA-Z0-9_-]{1,40}", config.profile):
                 raise ValueError
@@ -114,27 +120,15 @@ class Config:
                     or bootstrap.path not in ("", "/") or bootstrap.query or bootstrap.fragment
                 ):
                     raise ValueError
-            url = urlsplit(config.probe_url)
-            if (
-                url.scheme != "https" or not url.hostname or url.port not in (None, 443)
-                or url.username or url.password or url.fragment
-            ):
-                raise ValueError
+            for endpoint in (config.probe_url, *config.connectivity_urls):
+                if not isinstance(endpoint, str) or any(ch.isspace() for ch in endpoint):
+                    raise ValueError
+                url = urlsplit(endpoint)
+                if (
+                    url.scheme != "https" or not url.hostname or url.port not in (None, 443)
+                    or url.username or url.password or url.fragment
+                ):
+                    raise ValueError
             return config
         except (OSError, ValueError, TypeError, KeyError, ZoneInfoNotFoundError):
             raise RouteError("invalid_or_unreadable_config") from None
-
-    def judge(self, reading: dict) -> str | None:
-        try:
-            observed = str(ipaddress.ip_address(reading["ip"]))
-            expected = str(ipaddress.ip_address(self.expected_ip))
-        except (KeyError, ValueError, TypeError):
-            return "egress_ip_unknown"
-        if observed != expected:
-            return "egress_ip_changed"
-        country = reading.get("country")
-        if not isinstance(country, str) or not re.fullmatch(r"[A-Z]{2}", country):
-            return "egress_country_unknown"
-        if country != self.expected_country:
-            return "egress_country_changed"
-        return None

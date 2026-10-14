@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import ipaddress
+import queue
 import socket
 import tempfile
+import threading
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from .config import Config
-from .runner import SSHTunnel, egress_check
-from .wire import RouteError, server_health
+from .runner import SSHTunnel, connectivity_check
+from .wire import RouteError, proxy_json, server_health
 
 
 HINTS = {
@@ -29,11 +32,9 @@ HINTS = {
     "probe_tls_certificate_failed": "Check TLS certificates/clock/interception; do not disable verification.",
     "probe_tls_failed": "CONNECT succeeded but TLS failed; inspect the VPS upstream/proxy.",
     "probe_transport_failure": "Inspect VPS upstream/proxy and probe reachability; SSH alone is not enough.",
-    "egress_check_timeout": "The exit probe timed out; this alone does not identify the failed provider.",
+    "connectivity_check_timeout": "The connectivity check timed out; inspect the route and target reachability.",
     "probe_http_failure": "The probe website returned an error; inspect it before blaming the exit.",
     "probe_invalid_json": "The probe returned invalid JSON; use a compatible HTTPS IP/country endpoint.",
-    "egress_ip_changed": "Observed exit differs from configured IP; inspect routing before changing the pin.",
-    "egress_country_changed": "Observed country differs from configured country; inspect routing/probe data.",
 }
 
 
@@ -50,15 +51,41 @@ def failure_detail(reason: str) -> dict:
     elif reason.startswith("probe_tls"):
         stage = "target_tls"
     else:
-        stage = "exit_probe"
+        stage = "connectivity"
     return {"stage": stage, "result": reason,
             "hint": HINTS.get(reason, "Inspect the configured route; do not enable direct fallback.")}
 
 
+def observe_exit(config: Config, socket_path: Path) -> dict:
+    """Best-effort information for doctor only, never a launch/monitor condition."""
+    outcome: queue.Queue = queue.Queue(maxsize=1)
+
+    def inspect() -> None:
+        try:
+            value = proxy_json(str(socket_path), config.probe_url, config.timeout_seconds)
+            address = str(ipaddress.ip_address(value["ip"]))
+            country = value.get("country")
+            country = country if isinstance(country, str) and len(country) == 2 else None
+            outcome.put({"observed_exit_ip": address, "observed_exit_country": country,
+                         "exit_info_result": "available"})
+        except (RouteError, OSError, ValueError, TypeError, KeyError):
+            outcome.put({"observed_exit_ip": None, "observed_exit_country": None,
+                         "exit_info_result": "unavailable"})
+
+    threading.Thread(target=inspect, daemon=True).start()
+    try:
+        return outcome.get(timeout=config.timeout_seconds)
+    except queue.Empty:
+        return {"observed_exit_ip": None, "observed_exit_country": None,
+                "exit_info_result": "timeout"}
+
+
 def connect_diagnostics(config: Config) -> dict:
     stages = []
-    result = {"configured_egress_matches": False, "route_result": "route_not_started",
-              "stages": stages, "direct_fallback": False}
+    result = {"connectivity_ok": False, "route_result": "route_not_started",
+              "stages": stages, "direct_fallback": False, "exit_ip_pinning_enabled": False,
+              "observed_exit_ip": None, "observed_exit_country": None,
+              "exit_info_result": "not_requested"}
     try:
         if config.ssh_http_proxy:
             address = urlsplit(config.ssh_http_proxy)
@@ -81,12 +108,13 @@ def connect_diagnostics(config: Config) -> dict:
                 stages.append({"stage": "vps_service", "result": health["status"]})
                 if health["compatible"] is False:
                     raise RouteError("server_protocol_incompatible")
-                reason = egress_check(config, tunnel.socket_path)
+                reason = connectivity_check(config, tunnel.socket_path)
                 if reason:
                     raise RouteError(reason)
-                result.update(configured_egress_matches=True,
-                              route_result="configured_ip_and_country_match")
-                stages.append({"stage": "exit_probe", "result": "ip_and_country_match"})
+                result.update(connectivity_ok=True, route_result="reachable")
+                stages.append({"stage": "connectivity", "result": "https_reachable"})
+                result.update(observe_exit(config, tunnel.socket_path))
+                stages.append({"stage": "exit_info", "result": result["exit_info_result"]})
             finally:
                 tunnel.dispose()
     except RouteError as exc:

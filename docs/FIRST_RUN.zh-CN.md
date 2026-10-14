@@ -12,7 +12,6 @@
 | SSH 用户 | `xxx` 或 `root` | 能通过密钥登录的 VPS 用户 |
 | 本机私钥路径 | `~/.ssh/id_ed25519_vps_route` | 本机密钥文件，不是 VPS 的路径 |
 | 主机记录路径 | `~/.ssh/known_hosts` | 核对主机指纹后保存的本机 SSH 记录 |
-| 最终出口 IP、国家 | `xxx.xxx.xxx.xxx`、`US` | 在 VPS 上检查实际外网出口 |
 | VPS 服务路径 | `/home/xxx/.local/state/claude-launcher/connect.sock` | 下方说明；不是端口或网址 |
 
 私钥只保存在本机，VPS 的 `authorized_keys` 安装对应公钥。
@@ -28,15 +27,8 @@ ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_vps_route
 ssh -i ~/.ssh/id_ed25519_vps_route -p 22 xxx@xxx.xxx.xxx.xxx
 ```
 
-在 VPS 上检查出口：
-
-```bash
-curl -fsS https://ipinfo.io/json
-```
-
-填写返回的 `ip` 和两位大写 `country`。若 VPS 使用上游代理，填写最终出口，
-它可能不同于 VPS 的连接 IP。后续以 `doctor --connect` 的实际检查结果为准。
-退出 VPS 后继续操作。
+无需事先填写出口 IP 或国家。配置完成后，`doctor --connect` 会显示实际出口；
+若 VPS 使用上游代理，它可能不同于 VPS 的连接 IP。退出 VPS 后继续操作。
 
 普通用户的服务路径通常是：
 
@@ -83,8 +75,6 @@ VPS SSH port [22]: 22
 Existing SSH private key path [~/.ssh/id_ed25519]: ~/.ssh/id_ed25519_vps_route
 Verified known_hosts file [~/.ssh/known_hosts]:
 Private socket on VPS [/home/xxx/.local/state/claude-launcher/connect.sock]:
-Expected final public exit IP: xxx.xxx.xxx.xxx
-Expected two-letter country [US]: US
 Independent profile name [default]:
 Local HTTP proxy for SSH; blank means direct SSH:
 Process timezone; blank means host default:
@@ -121,7 +111,8 @@ vps-route auth login
 非 root 用户需要可用的 systemd 用户服务；若部署提示用户服务不可用，
 请 VPS 管理员检查该用户的 user manager 和 linger 设置。
 
-确认 `doctor --connect` 显示 `configured_egress_matches: true` 且正常退出，再登录。
+确认 `doctor --connect` 显示 `connectivity_ok: true` 且正常退出，再登录。
+`observed_exit_ip` 是当前实际出口，仅供查看；查询失败或出口变化不会阻止使用。
 `install` 下载官方最新版 Claude；已安装则跳过，更新使用 `vps-route update`。
 
 1. 保持登录终端等待。
@@ -160,10 +151,13 @@ vps-route run
 | `network_isolation_unavailable` | 检查 bubblewrap 与系统非特权网络命名空间支持；不要去掉隔离绕过 |
 | SSH 主机身份校验失败 | 向管理员核对主机指纹，不关闭身份校验 |
 | SSH 登录失败或超时 | 检查用户名、密钥、SSH 端口，以及配置的本机代理是否运行 |
-| 出口不匹配 | 核对配置的最终出口 IP/国家，不要误填前置 VPN 的 IP |
+| 出口 IP 显示为空，但连通性正常 | IP 查询服务暂不可用，不影响使用；稍后重试 doctor |
 | 已安装提示 | 正常，直接登录或运行；升级用 `vps-route update` |
 | 配置冲突 | 原配置已保留；核对导入文件，不用 init 强行覆盖 |
 | 登录 code 失败 | 使用最新登录终端对应的网址和完整 code，勿重复使用旧 code |
-| 使用中 Claude 退出 | 执行 `vps-route doctor --connect` 和 `vps-route logs --tail 20`，确认恢复后手动启动 |
+| 使用中提示连接异常 | 会话保留，等待原链路恢复；SSH 自动重连。恢复提示后按需重试请求；可用 `vps-route doctor --connect` 和 `vps-route logs --tail 20` 排查 |
+| 提示 SSH 验证失败、停止重连 | 核对密钥和 VPS 指纹，不要关闭指纹校验；修复后手动退出并重新启动 |
+| 使用中 Claude 仍退出 | 新行为仅在重新启动后生效；查看日志区分旧版本、手动停止或 Claude 自身退出 |
+| 退出后终端出现 `35;142;34M` 一类数字 | 新版强退会重置终端；旧 Orca 标签页可执行 `reset`，无效则新建标签页；不是 `vps-route reset` |
 
 其他操作见 [使用说明](USAGE.zh-CN.md)。

@@ -15,13 +15,15 @@ from .wire import RouteError
 
 
 PRIVATE_FIELDS = {
-    "ssh_host", "ssh_user", "identity_file", "known_hosts", "remote_socket", "expected_ip",
-    "ssh_http_proxy", "texlive_root", "profile", "probe_url",
+    "ssh_host", "ssh_user", "identity_file", "known_hosts", "remote_socket",
+    "ssh_http_proxy", "texlive_root", "profile", "probe_url", "connectivity_urls",
 }
 
 
 def config_values(config: Config, *, reveal: bool = False) -> dict:
     values = asdict(config)
+    values.pop("expected_ip", None)
+    values.pop("expected_country", None)
     for name, value in values.items():
         if isinstance(value, Path):
             values[name] = str(value)

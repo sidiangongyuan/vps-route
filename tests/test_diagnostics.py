@@ -56,7 +56,7 @@ class DiagnosticTests(unittest.TestCase):
         with patch("claude_launcher.diagnostics.SSHTunnel") as tunnel:
             tunnel.return_value.start.side_effect = RouteError("ssh_authentication_failed")
             result = connect_diagnostics(self.config)
-            self.assertFalse(result["configured_egress_matches"])
+            self.assertFalse(result["connectivity_ok"])
             self.assertEqual(result["stages"][-1]["stage"], "ssh")
             self.assertIn("authorization", result["stages"][-1]["hint"])
             tunnel.return_value.dispose.assert_called_once()
@@ -65,21 +65,43 @@ class DiagnosticTests(unittest.TestCase):
         with patch("claude_launcher.diagnostics.SSHTunnel"), patch(
             "claude_launcher.diagnostics.server_health",
             return_value={"status": "available", "compatible": False, "protocol": 999},
-        ), patch("claude_launcher.diagnostics.egress_check") as probe:
+        ), patch("claude_launcher.diagnostics.connectivity_check") as probe:
             result = connect_diagnostics(self.config)
             self.assertEqual(result["route_result"], "server_protocol_incompatible")
             probe.assert_not_called()
 
     def test_upstream_failure_and_success_keep_sanitized_stage_information(self):
-        for reason in ("upstream_unavailable", "probe_tls_failed", "egress_ip_changed", None):
+        for reason in ("upstream_unavailable", "probe_tls_failed", None):
             with self.subTest(reason=reason), patch("claude_launcher.diagnostics.SSHTunnel"), \
                     patch("claude_launcher.diagnostics.server_health", return_value={
                         "status": "available", "compatible": True, "protocol": 1,
-                    }), patch("claude_launcher.diagnostics.egress_check", return_value=reason):
+                    }), patch("claude_launcher.diagnostics.connectivity_check", return_value=reason), \
+                    patch("claude_launcher.diagnostics.proxy_json",
+                          return_value={"ip": "8.8.8.8", "country": "JP"}):
                 result = connect_diagnostics(self.config)
-                self.assertEqual(result["configured_egress_matches"], reason is None)
+                self.assertEqual(result["connectivity_ok"], reason is None)
                 self.assertNotIn("203.0.113", json.dumps(result))
                 self.assertFalse(result["direct_fallback"])
+                if reason is None:
+                    self.assertEqual(result["observed_exit_ip"], "8.8.8.8")
+                    self.assertEqual(result["observed_exit_country"], "JP")
+                    self.assertFalse(result["exit_ip_pinning_enabled"])
+
+    def test_exit_lookup_failure_is_informational_and_doctor_still_succeeds(self):
+        with patch("claude_launcher.diagnostics.SSHTunnel"), \
+                patch("claude_launcher.diagnostics.server_health", return_value={
+                    "status": "available", "compatible": True, "protocol": 1,
+                }), patch("claude_launcher.diagnostics.connectivity_check", return_value=None), \
+                patch("claude_launcher.diagnostics.proxy_json",
+                      side_effect=RouteError("probe_transport_failure")), \
+                patch.object(cli, "namespace_available", return_value=True), \
+                patch.object(cli, "system_python_compatible", return_value=True), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.doctor(self.config, connect=True), 0)
+            result = json.loads(output.getvalue())
+            self.assertTrue(result["connectivity_ok"])
+            self.assertIsNone(result["observed_exit_ip"])
+            self.assertEqual(result["exit_info_result"], "unavailable")
 
     def test_doctor_report_is_private_and_does_not_read_account_settings(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(

@@ -29,24 +29,75 @@ from urllib.parse import urlsplit
 from .config import Config
 from .customizations import project_instruction_mounts, shared_skill_mounts
 from .filesystem import host_socket_mounts, private_mounts, private_paths, research_mounts
-from .wire import RouteError, proxy_json
+from .wire import RouteError, proxy_reachable
 
 
 PROXY_NAMES = {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_DIR = Path(__file__).resolve().parent
 ENTRY_DIR = PACKAGE_DIR / "entries"
-# Tolerate brief transport stalls; a dead SSH process still terminates its child.
+# Tolerate brief transport stalls before declaring the SSH transport dead.
 SSH_KEEPALIVE_OPTIONS = (
     "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3",
 )
 
 # termios restoration does not reset terminal-emulator modes enabled by a TUI.
 TERMINAL_RESET = (
-    b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l"
+    b"\x1b[?9l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l"
     b"\x1b[?1015l\x1b[?1016l\x1b[?1004l\x1b[?2004l\x1b[?2026l"
     b"\x1b[?1049l\x1b[0m\x1b[?25h"
 )
+# Cancel a partial control string, then reset emulator state on forced exit.
+# Normal exits keep scrollback; forced exits prioritize a usable shell.
+TERMINAL_HARD_RESET = b"\x18\x1b\\\x1bc" + TERMINAL_RESET
+
+
+def _restore_terminal(input_fd: int, output_fd: int, attributes: list | None,
+                      *, hard_reset: bool = False, rendered_tui: bool = False) -> None:
+    """Stop mouse tracking and absorb in-flight input before restoring shell echo.
+
+    A remote terminal may send its last mouse packets after the first reset.
+    Do not request a terminal reply: a delayed reply can itself pollute the shell.
+    """
+    terminal_fd = output_fd if os.isatty(output_fd) else (
+        input_fd if attributes is not None else (output_fd if rendered_tui else None)
+    )
+    reset = TERMINAL_HARD_RESET if hard_reset else TERMINAL_RESET
+    owned_fd = None
+    try:
+        if (terminal_fd == input_fd
+                and fcntl.fcntl(input_fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY):
+            owned_fd = os.open(os.ttyname(input_fd), os.O_WRONLY | os.O_NOCTTY)
+            terminal_fd = owned_fd
+        if attributes is not None:
+            tty.setraw(input_fd, termios.TCSANOW)
+        if terminal_fd is not None:
+            os.write(terminal_fd, reset)
+        if attributes is not None and terminal_fd is not None:
+            deadline = time.monotonic() + 1.0
+            quiet_until = time.monotonic() + 0.35
+            while True:
+                remaining = min(deadline, quiet_until) - time.monotonic()
+                if remaining <= 0 or not select.select([input_fd], [], [], remaining)[0]:
+                    break
+                if not os.read(input_fd, 65536):
+                    break
+                quiet_until = max(quiet_until, time.monotonic() + 0.15)
+    except (OSError, termios.error):
+        pass  # A disconnected terminal must not interfere with process cleanup.
+    finally:
+        if terminal_fd is not None:
+            try:
+                os.write(terminal_fd, reset)
+            except OSError:
+                pass
+        if attributes is not None:
+            try:
+                termios.tcsetattr(input_fd, termios.TCSAFLUSH, attributes)
+            except (OSError, termios.error):
+                pass
+        if owned_fd is not None:
+            os.close(owned_fd)
 
 
 def prepare_browser_hook(profile: Path) -> Path:
@@ -133,13 +184,24 @@ class SSHTunnel:
         self.config = config
         self.socket_path = socket_path
         self.process: subprocess.Popen | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._errors = tempfile.TemporaryFile()
+        self._socket_identity: tuple[int, int] | None = None
 
     def start(self) -> None:
+        with self._lock:
+            self._start()
+
+    def _start(self, cancelled: threading.Event | None = None) -> None:
+        if cancelled is not None and cancelled.is_set():
+            return
         cfg = self.config
         if not cfg.identity_file.is_file() or not cfg.known_hosts.is_file():
             raise RouteError("ssh_key_or_verified_known_hosts_missing")
+        if self.socket_path.exists() or self.socket_path.is_symlink():
+            raise RouteError("ssh_forward_socket_changed")
+        self._errors.seek(0)
+        self._errors.truncate()
         args = [
             "ssh", "-F", "/dev/null", "-N", "-T", "-n", "-a",
             "-p", str(cfg.ssh_port), "-l", cfg.ssh_user,
@@ -165,6 +227,9 @@ class SSHTunnel:
         )
         deadline = time.monotonic() + cfg.timeout_seconds + 2
         while time.monotonic() < deadline:
+            if cancelled is not None and cancelled.is_set():
+                self.close()
+                return
             if self.process.poll() is not None:
                 self._errors.seek(0)
                 message = self._errors.read(8192).lower()
@@ -174,9 +239,35 @@ class SSHTunnel:
                     raise RouteError("ssh_authentication_failed")
                 raise RouteError("ssh_tunnel_failed")
             if self.socket_path.exists():
+                info = self.socket_path.lstat()
+                if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
+                    raise RouteError("ssh_forward_socket_changed")
+                self._socket_identity = (info.st_dev, info.st_ino)
                 return
             time.sleep(0.05)
         raise RouteError("ssh_tunnel_start_timeout")
+
+    def reconnect(self, cancelled: threading.Event) -> None:
+        """Replace only this tunnel's socket; retain host verification and bootstrap."""
+        with self._lock:
+            if cancelled.is_set():
+                return
+            self.close()
+            try:
+                info = self.socket_path.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid()
+                        or (info.st_dev, info.st_ino) != self._socket_identity):
+                    raise RouteError("ssh_forward_socket_changed")
+                self.socket_path.unlink()
+            self._socket_identity = None
+            try:
+                self._start(cancelled)
+            except BaseException:
+                self.close()
+                raise
 
     def alive(self) -> bool:
         return self.process is not None and self.process.poll() is None
@@ -208,6 +299,7 @@ def sandbox_command(
     texlive_root: Path | None = None,
     research_filesystem: bool = False,
     timezone: str | None = None,
+    reconnectable: bool = False,
 ) -> tuple[list[str], dict[str, str]]:
     """Create only mount/namespace changes scoped to the launched child."""
     profile_home = profile_home.resolve()
@@ -245,9 +337,21 @@ def sandbox_command(
     ])
     if research_filesystem:
         args.extend(research_mounts(live_home))
+    upstream = "/run/claude-launcher/upstream.sock"
+    args.extend(["--dir", "/run/claude-launcher"])
+    if reconnectable:
+        # A socket bind pins its inode. A private, socket-only directory lets an
+        # existing namespace see the replacement after SSH reconnects.
+        parent = socket_path.parent
+        info = parent.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077 or set(parent.iterdir()) != {socket_path}):
+            raise RouteError("unsafe_reconnect_directory")
+        upstream = "/run/claude-launcher/route/" + socket_path.name
+        args.extend(["--ro-bind", str(parent), "/run/claude-launcher/route"])
+    else:
+        args.extend(["--ro-bind", str(socket_path), upstream])
     args.extend([
-        "--dir", "/run/claude-launcher",
-        "--ro-bind", str(socket_path), "/run/claude-launcher/upstream.sock",
         "--bind", str(profile_home), str(profile_home),
         "--bind", str(workspace), str(workspace),
     ])
@@ -282,7 +386,7 @@ def sandbox_command(
         args.extend(["--ro-bind", str(texlive_root), str(texlive_root)])
     args.extend([
         "--chdir", str(workspace), "--", "/usr/bin/python3",
-        str(ENTRY_DIR / "sandbox_entry.py"), "/run/claude-launcher/upstream.sock", *command,
+        str(ENTRY_DIR / "sandbox_entry.py"), upstream, *command,
     ])
     environment = clean_environment()
     environment["HOME"] = str(profile_home)
@@ -317,6 +421,8 @@ def run_supervised(
     *,
     input_fd: int | None = None,
     output_fd: int | None = None,
+    reconnect: Callable[[threading.Event], None] | None = None,
+    connection_event: Callable[[str, str | None], None] | None = None,
 ) -> tuple[int, str]:
     """Monitor SSH liveness and the supplied upstream/exit check independently."""
     input_fd = sys.stdin.fileno() if input_fd is None else input_fd
@@ -325,6 +431,7 @@ def run_supervised(
     finished = threading.Event()
     failed = threading.Event()
     failure_lock = threading.Lock()
+    notices: queue.Queue = queue.Queue()
     master, slave = pty.openpty()
     try:
         child = subprocess.Popen(
@@ -343,10 +450,13 @@ def run_supervised(
         with failure_lock:
             if failure:
                 return
+            finished.set()  # Cancel an in-flight reconnect before waiting for its lock.
             failure.append(reason)
             # Closing SSH tears down established tunnels before the process kill.
-            close_route()
-            failed.set()
+            try:
+                close_route()
+            finally:
+                failed.set()
 
     def watch() -> None:
         assert check is not None
@@ -354,12 +464,72 @@ def run_supervised(
             try:
                 reason = check()
             except Exception:
-                reason = "egress_check_failed"
+                reason = "connectivity_check_failed"
             if finished.is_set():
                 return
             if reason:
                 fail(reason)
                 return
+
+    def watch_recovering() -> None:
+        # One worker owns reconnects. The main thread remains responsive to input
+        # and termination, and serializes notices with child terminal output.
+        next_probe = time.monotonic() + interval
+        next_retry = 0.0
+        backoff = 5.0
+        state = "online"
+        blocked = False
+
+        def transition(new_state: str, reason: str | None = None) -> None:
+            nonlocal state
+            if state != new_state:
+                state = new_state
+                notices.put((new_state, reason))
+
+        while not finished.wait(0.1):
+            if not route_alive():
+                if state == "online":
+                    transition("connection_lost", "ssh_tunnel_lost")
+                if blocked or time.monotonic() < next_retry:
+                    continue
+                try:
+                    reconnect(finished)
+                    if finished.is_set():
+                        return
+                    if not route_alive():
+                        raise RouteError("ssh_tunnel_failed")
+                except Exception as exc:
+                    if finished.is_set():
+                        return
+                    reason = str(exc) if isinstance(exc, RouteError) else "ssh_tunnel_failed"
+                    if reason in {"ssh_host_key_verification_failed", "ssh_authentication_failed",
+                                  "ssh_key_or_verified_known_hosts_missing",
+                                  "ssh_forward_socket_changed"}:
+                        blocked = True
+                        transition("reconnect_blocked", reason)
+                    next_retry = time.monotonic() + backoff
+                    backoff = min(backoff * 2, 30.0)
+                    continue
+                next_retry = time.monotonic() + backoff
+                backoff = min(backoff * 2, 30.0)
+                next_probe = 0.0
+            if time.monotonic() < next_probe:
+                continue
+            try:
+                reason = check() if check is not None else None
+            except Exception:
+                reason = "connectivity_check_failed"
+            if finished.is_set():
+                return
+            next_probe = time.monotonic() + interval
+            if reason:
+                transition("connection_lost", reason)
+            else:
+                if state != "online":
+                    transition("connection_restored")
+                    state = "online"
+                backoff = 5.0
+                next_retry = 0.0
 
     def resize(*_unused: object) -> None:
         if os.isatty(input_fd):
@@ -377,9 +547,20 @@ def run_supervised(
         for number in (signal.SIGWINCH, signal.SIGINT, signal.SIGTERM)
     }
     old_tty = termios.tcgetattr(input_fd) if os.isatty(input_fd) else None
-    worker = threading.Thread(target=watch, daemon=True) if check is not None else None
+    worker = (threading.Thread(target=watch_recovering if reconnect is not None else watch,
+                               daemon=True)
+              if check is not None or reconnect is not None else None)
     reaped = False
     status = 0
+    rendered_tui = False
+
+    def render(data: bytes) -> None:
+        nonlocal rendered_tui
+        # Relay clients can expose pipes rather than a local TTY. Only append
+        # terminal cleanup to such output if the child actually rendered ANSI.
+        rendered_tui = rendered_tui or b"\x1b" in data
+        os.write(output_fd, data)
+
     try:
         signal.signal(signal.SIGWINCH, resize)
         signal.signal(signal.SIGINT, interrupted)
@@ -402,12 +583,29 @@ def run_supervised(
                         break
                     if not data:
                         break
-                    os.write(output_fd, data)
+                    render(data)
                 break
-            if not route_alive():
+            if reconnect is None and not route_alive():
                 fail("ssh_tunnel_lost")
             if failed.is_set():
                 break
+            while not notices.empty():
+                event, detail = notices.get_nowait()
+                messages = {
+                    "connection_lost": "Connection unavailable; session kept open. "
+                                       "Waiting for the configured VPS route; no direct fallback.",
+                    "connection_restored": "VPS route reachable again. "
+                                            "Retry any interrupted request if needed.",
+                    "reconnect_blocked": "SSH verification/authentication failed; automatic "
+                                         "reconnect stopped. Check configuration and restart; "
+                                         "session kept open, no direct fallback.",
+                }
+                render(("\r\nvps-route: " + messages[event] + "\r\n").encode())
+                if connection_event is not None:
+                    try:
+                        connection_event(event, detail)
+                    except (OSError, RouteError):
+                        pass
             readable, _, _ = select.select(inputs, [], [], 0.1)
             for source in readable:
                 try:
@@ -422,86 +620,119 @@ def run_supervised(
                     if source == input_fd:
                         os.write(master, b"\x04")
                     continue
-                os.write(output_fd if source == master else master, data)
+                if source == master:
+                    render(data)
+                else:
+                    os.write(master, data)
     finally:
         finished.set()
-        close_route()
-        if not reaped:
+        try:
             try:
-                os.killpg(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            deadline = time.monotonic() + 2
-            while time.monotonic() < deadline:
-                observed, status = os.waitpid(pid, os.WNOHANG)
-                if observed:
-                    reaped = True
-                    break
-                time.sleep(0.05)
-            if not reaped:
-                try:
-                    os.killpg(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                _, status = os.waitpid(pid, 0)
-        if worker is not None:
-            worker.join(timeout=1)
-        if os.isatty(output_fd):
+                close_route()
+            finally:
+                if not reaped:
+                    try:
+                        os.killpg(pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline:
+                        observed, status = os.waitpid(pid, os.WNOHANG)
+                        if observed:
+                            reaped = True
+                            break
+                        time.sleep(0.05)
+                    if not reaped:
+                        try:
+                            os.killpg(pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        _, status = os.waitpid(pid, 0)
+                if worker is not None:
+                    worker.join(timeout=1)
+        finally:
             try:
-                os.write(output_fd, TERMINAL_RESET)
-            except OSError:
-                pass  # A disconnected terminal must not prevent process cleanup.
-        if old_tty is not None:
-            # Drop queued mouse reports before handing input back to the shell.
-            termios.tcsetattr(input_fd, termios.TCSAFLUSH, old_tty)
-        for number, handler in old_handlers.items():
-            signal.signal(number, handler)
-        os.close(master)
-        child.returncode = os.waitstatus_to_exitcode(status)
+                _restore_terminal(input_fd, output_fd, old_tty,
+                                  hard_reset=bool(failure), rendered_tui=rendered_tui)
+            finally:
+                for number, handler in old_handlers.items():
+                    signal.signal(number, handler)
+                os.close(master)
+                child.returncode = os.waitstatus_to_exitcode(status)
     if failure:
         return 69, failure[0]
     code = os.waitstatus_to_exitcode(status)
     return (code if code >= 0 else 128 - code), "child_exited"
 
 
-def egress_check(config: Config, socket_path: Path) -> str | None:
-    outcome: queue.Queue = queue.Queue(maxsize=1)
+def connectivity_check(config: Config, socket_path: Path,
+                       record: Callable[[list[dict]], None] | None = None) -> str | None:
+    outcome: queue.Queue = queue.Queue()
+    started = time.monotonic()
+    deadline = started + config.timeout_seconds
 
-    def inspect() -> None:
+    def inspect(index: int, url: str) -> None:
+        began = time.monotonic()
         try:
-            value = proxy_json(str(socket_path), config.probe_url, config.timeout_seconds)
-            outcome.put(config.judge(value))
+            proxy_reachable(str(socket_path), url, config.timeout_seconds)
+            reason = "reachable"
         except RouteError as exc:
-            outcome.put(str(exc))
+            reason = str(exc)
         except Exception:
-            outcome.put("egress_check_failed")
+            reason = "connectivity_check_failed"
+        outcome.put({"target_index": index, "reason": reason,
+                     "elapsed_seconds": round(time.monotonic() - began, 3)})
 
-    # A socket timeout alone is per read, not a total deadline. Bound the whole
-    # check so a slow response cannot keep an unverified session running.
-    threading.Thread(target=inspect, daemon=True).start()
-    try:
-        return outcome.get(timeout=config.timeout_seconds)
-    except queue.Empty:
-        return "egress_check_timeout"
+    # Each target gets the full timeout concurrently, with the same total bound.
+    # A slow primary no longer consumes the alternate's time budget.
+    for index, url in enumerate(config.connectivity_urls):
+        threading.Thread(target=inspect, args=(index, url), daemon=True).start()
+    results: dict[int, dict] = {}
+    reason = "connectivity_check_timeout"
+    while len(results) < len(config.connectivity_urls):
+        try:
+            result = outcome.get(timeout=max(0, deadline - time.monotonic()))
+        except queue.Empty:
+            break
+        results[result["target_index"]] = result
+        reason = result["reason"]
+        if reason == "reachable":
+            reason = None
+            break
+        if len(results) < len(config.connectivity_urls):
+            reason = "connectivity_check_timeout"
+    if record is not None:
+        details = [results.get(index, {
+            "target_index": index,
+            "reason": "pending" if reason is None else "connectivity_check_timeout",
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+        }) for index in range(len(config.connectivity_urls))]
+        try:
+            record(details)
+        except OSError:
+            pass  # Logging failure must not turn a reachable route into an outage.
+    return reason
 
 
-class RuntimeEgressMonitor:
-    """Debounce probe failures, never tolerate a confirmed changed exit."""
+class RuntimeConnectivityMonitor:
+    """Stop after consecutive unreachable checks; exit IP is not a condition."""
 
-    def __init__(self, config: Config, socket_path: Path) -> None:
+    def __init__(self, config: Config, socket_path: Path,
+                 record: Callable[[list[dict]], None] | None = None,
+                 *, report_immediately: bool = False) -> None:
         self.config = config
         self.socket_path = socket_path
         self.consecutive_failures = 0
+        self.record = record
+        self.report_immediately = report_immediately
 
     def __call__(self) -> str | None:
-        reason = egress_check(self.config, self.socket_path)
+        reason = connectivity_check(self.config, self.socket_path, self.record)
         if reason is None:
             self.consecutive_failures = 0
             return None
-        if reason in {"egress_ip_changed", "egress_country_changed"}:
-            return reason
         self.consecutive_failures += 1
-        if self.consecutive_failures >= self.config.runtime_probe_failures:
+        if self.report_immediately or self.consecutive_failures >= self.config.runtime_probe_failures:
             return reason
         # The network namespace remains fail-closed during this grace period.
         return None

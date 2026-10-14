@@ -71,13 +71,14 @@ def relay(left: socket.socket, right: socket.socket) -> None:
         return
 
 
-def proxy_json(
+def _proxy_request(
     socket_path: str,
     url: str,
     timeout: float = 8.0,
     context: ssl.SSLContext | None = None,
+    *, read_json: bool = True,
 ) -> dict[str, Any]:
-    """Fetch a bounded HTTPS JSON response through exactly one Unix proxy.
+    """Check HTTPS or fetch JSON through exactly one Unix proxy.
 
     There is no environment-proxy lookup, direct fallback, or redirect follow.
     TLS is end-to-end to the probe host; the proxy only sees CONNECT metadata.
@@ -95,14 +96,23 @@ def proxy_json(
     host = parsed.hostname.encode("idna").decode("ascii")
     if any(ch in host for ch in "\r\n[]:"):
         raise RouteError("unsupported_probe_hostname")
+    deadline = time.monotonic() + timeout
     raw = unix_connect(socket_path, timeout)
     connection = None
+    tls = None
+
+    def remaining() -> float:
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise TimeoutError
+        return value
+
     try:
         authority = f"{host}:443"
         raw.sendall(
             f"CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n".encode("ascii")
         )
-        header = read_header(raw)
+        header = read_header(raw, deadline=deadline)
         status = header.split(b"\r\n", 1)[0].split()
         if len(status) < 2 or status[1] != b"200":
             for reason in ("target_resolution_failed", "upstream_unavailable",
@@ -111,20 +121,30 @@ def proxy_json(
                     raise RouteError(reason)
             raise RouteError("proxy_connect_rejected")
         try:
+            raw.settimeout(remaining())
             tls = (context or ssl.create_default_context()).wrap_socket(raw, server_hostname=host)
         except ssl.SSLCertVerificationError:
             raise RouteError("probe_tls_certificate_failed") from None
         except ssl.SSLError:
             raise RouteError("probe_tls_failed") from None
-        connection = http.client.HTTPConnection(host, timeout=timeout)
+        connection = http.client.HTTPConnection(host, timeout=remaining())
         connection.sock = tls
         path = parsed.path or "/"
         if parsed.query:
             path += "?" + parsed.query
+        tls.settimeout(remaining())
         connection.request("GET", path, headers={"Accept": "application/json"})
+        tls.settimeout(remaining())
         response = connection.getresponse()
+        if not read_json:
+            # Even a 403/429 proves a TLS-verified destination answered. Do not
+            # mistake website access/rate policy for transport failure.
+            if not 200 <= response.status < 500:
+                raise RouteError("probe_http_failure")
+            return {}
         if response.status != 200:
             raise RouteError("probe_http_failure")
+        tls.settimeout(remaining())
         payload = response.read(65537)
         if len(payload) > 65536:
             raise RouteError("probe_response_too_large")
@@ -142,7 +162,21 @@ def proxy_json(
     finally:
         if connection is not None:
             connection.close()
+        elif tls is not None:
+            tls.close()
         raw.close()
+
+
+def proxy_json(socket_path: str, url: str, timeout: float = 8.0,
+               context: ssl.SSLContext | None = None) -> dict[str, Any]:
+    """Read optional exit information through the route, without comparing IPs."""
+    return _proxy_request(socket_path, url, timeout, context)
+
+
+def proxy_reachable(socket_path: str, url: str, timeout: float = 8.0,
+                    context: ssl.SSLContext | None = None) -> None:
+    """Require CONNECT, verified target TLS and an HTTP response; no IP lookup."""
+    _proxy_request(socket_path, url, timeout, context, read_json=False)
 
 
 def server_health(socket_path: str, timeout: float = 8.0) -> dict:

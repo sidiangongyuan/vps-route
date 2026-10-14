@@ -23,7 +23,7 @@ from .onboarding import complete_authenticated_onboarding
 from .setup import default_config_path, initialize_config
 from .sessions import SessionLease, list_sessions, maintenance_barrier, stop_session
 from .runner import (
-    ENTRY_DIR, RuntimeEgressMonitor, SSHTunnel, egress_check, receipt, run_supervised,
+    ENTRY_DIR, RuntimeConnectivityMonitor, SSHTunnel, connectivity_check, receipt, run_supervised,
     sandbox_command, ssh_arguments,
 )
 from .wire import RouteError
@@ -95,7 +95,8 @@ def doctor(config: Config | None, connect: bool, hicc: bool = False,
             "isolated_timezone_source": "process_override" if config.timezone else "host_system_default",
             "isolated_timezone": config.timezone,
             "research_filesystem_enabled": config.research_filesystem,
-            "runtime_egress_monitor_enabled": True,
+            "runtime_connectivity_monitor_enabled": True,
+            "exit_ip_pinning_enabled": False,
             "runtime_probe_interval_seconds": config.runtime_probe_interval_seconds,
             "runtime_probe_failures": config.runtime_probe_failures,
         })
@@ -112,7 +113,7 @@ def doctor(config: Config | None, connect: bool, hicc: bool = False,
         if ready:
             checks.update(connect_diagnostics(config))
         else:
-            checks.update(configured_egress_matches=False, network_probe_executed=False,
+            checks.update(connectivity_ok=False, network_probe_executed=False,
                           route_result="local_dependencies_unavailable")
     if report is not None:
         if hicc:
@@ -121,7 +122,7 @@ def doctor(config: Config | None, connect: bool, hicc: bool = False,
 
         private_json(report.expanduser().absolute(), checks)
     print(json.dumps(checks, indent=2))
-    return 0 if ready and (not connect or checks["configured_egress_matches"]) else 69
+    return 0 if ready and (not connect or checks["connectivity_ok"]) else 69
 
 
 def system_python_compatible() -> bool:
@@ -215,14 +216,17 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
     if profile_home.resolve() == Path.home().resolve():
         raise RouteError("profile_must_not_be_live_home")
     code, reason = 69, "route_not_started"
+    keep_session = audit.operation == "run" and not install and not verify_after and not login
     with tempfile.TemporaryDirectory(prefix="claude-route-") as directory:
-        tunnel = SSHTunnel(config, Path(directory) / "proxy.sock")
+        route_directory = Path(directory) / "route"
+        route_directory.mkdir(mode=0o700)
+        tunnel = SSHTunnel(config, route_directory / "proxy.sock")
         try:
             tunnel.start()
-            reason = egress_check(config, tunnel.socket_path)
+            reason = connectivity_check(config, tunnel.socket_path, audit.connection_check)
             if reason:
                 raise RouteError(reason)
-            audit.write("preflight_passed", country=config.expected_country)
+            audit.write("preflight_passed")
             if (safe_mode or skills_mode) and complete_authenticated_onboarding(profile_home, executable):
                 print("vps-route: existing login kept; first-run UI setup repaired", flush=True)
             if login:
@@ -241,12 +245,16 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                 texlive_root=config.texlive_root,
                 research_filesystem=config.research_filesystem,
                 timezone=config.timezone,
+                reconnectable=keep_session,
             )
             code, reason = run_supervised(
                 command, environment,
-                RuntimeEgressMonitor(config, tunnel.socket_path),
+                RuntimeConnectivityMonitor(config, tunnel.socket_path, audit.connection_check,
+                                           report_immediately=keep_session),
                 tunnel.close, tunnel.alive,
                 config.runtime_probe_interval_seconds,
+                reconnect=tunnel.reconnect if keep_session else None,
+                connection_event=audit.connection_state if keep_session else None,
             )
             if login and code == 0:
                 complete_authenticated_onboarding(profile_home, executable)
@@ -260,7 +268,7 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                     verify_tunnel = SSHTunnel(config, Path(directory) / "verify.sock")
                     try:
                         verify_tunnel.start()
-                        if egress_check(config, verify_tunnel.socket_path):
+                        if connectivity_check(config, verify_tunnel.socket_path, audit.connection_check):
                             code, reason = 69, "update_verification_route_failed"
                         else:
                             verify_command, verify_environment = sandbox_command(
@@ -270,7 +278,8 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                             )
                             verify_code, _ = run_supervised(
                                 verify_command, verify_environment,
-                                RuntimeEgressMonitor(config, verify_tunnel.socket_path),
+                                RuntimeConnectivityMonitor(config, verify_tunnel.socket_path,
+                                                           audit.connection_check),
                                 verify_tunnel.close, verify_tunnel.alive,
                                 config.runtime_probe_interval_seconds,
                             )
@@ -304,13 +313,13 @@ def network_test(config: Config) -> int:
         tunnel = SSHTunnel(config, root / "proxy.sock")
         try:
             tunnel.start()
-            reason = egress_check(config, tunnel.socket_path)
+            reason = connectivity_check(config, tunnel.socket_path)
             if reason:
                 raise RouteError(reason)
             command, environment = sandbox_command(
                 tunnel.socket_path, profile, workspace,
                 ["/usr/bin/python3", str(ENTRY_DIR / "network_test_entry.py"),
-                 config.expected_ip, config.expected_country],
+                 *config.connectivity_urls],
                 research_filesystem=config.research_filesystem,
                 timezone=config.timezone,
             )
@@ -386,7 +395,7 @@ def main() -> int:
     shell = subparsers.add_parser("shell", help="open an interactive VPS SSH shell")
     shell.add_argument("--password", action="store_true",
                        help="prompt in the terminal for the VPS password; keep restricted keys unchanged")
-    subparsers.add_parser("network-test", help="isolated egress and unauthenticated Gemini HTTPS test")
+    subparsers.add_parser("network-test", help="isolated HTTPS connectivity and direct-route blocking test")
     archive = subparsers.add_parser("legacy-archive", help="preview or archive legacy Claude/HICC state")
     archive.add_argument("--apply", action="store_true")
     archive.add_argument("--confirm-hicc-retired", action="store_true")

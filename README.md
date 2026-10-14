@@ -53,7 +53,7 @@ vps-route auth status --text
 ```
 
 `init` asks for your VPS address, SSH user/port, key and known-hosts paths,
-expected exit IP/country, and the private service path on the VPS.
+and the private service path on the VPS. No fixed exit IP is required.
 See the [complete example](docs/FIRST_RUN.zh-CN.md) for what each field means.
 Skip `setup-vps` if your VPS already has a compatible service.
 
@@ -97,9 +97,15 @@ Your existing Claude data is not moved or deleted. Normal runs support skills,
 project `CLAUDE.md`, rules and automatic memory. Hooks, MCP, account connectors,
 remote control and cloud skill sync are disabled.
 
-Before launch, the exit IP and country must match your config. During use, SSH
-and periodic exit checks are monitored; failure stops the Claude process started
-by the tool, not your terminal window. Exit checks are periodic, not instantaneous.
+Before launch, the tool checks HTTPS connectivity through your VPS. During use,
+it monitors SSH and periodically checks independent HTTPS targets in parallel;
+one reachable target is enough. During `run`, an outage shows a warning but keeps
+your session open. Lost SSH connections are retried through the same configured
+VPS, without a direct fallback. Once connectivity returns, retry interrupted
+requests if needed. Login, install and update commands still stop on route failure.
+A changed exit IP does not stop Claude.
+`doctor --connect` shows the observed exit IP for information only; a failed IP
+lookup does not fail an otherwise successful connectivity check.
 Browsers and unrelated applications are not covered. See [Security](docs/SECURITY.md).
 
 ## Update or uninstall the tool

@@ -68,8 +68,6 @@ def initialize_config(destination: Path, source: Path | None = None,
                                  if user == "root" else
                                  str(Path("/home") / user /
                                      ".local/state/claude-launcher/connect.sock")),
-            "expected_ip": ask("Expected final public exit IP"),
-            "expected_country": ask("Expected two-letter country", "US").upper(),
             "profile": ask("Independent profile name", "default"),
             "ssh_http_proxy": ask("Local HTTP proxy for SSH; blank means direct SSH") or None,
             "timezone": ask("Process timezone; blank means host default") or None,
@@ -98,6 +96,8 @@ def initialize_config(destination: Path, source: Path | None = None,
         return config
     _private_parent(destination)
     payload = asdict(config)
+    payload.pop("expected_ip", None)
+    payload.pop("expected_country", None)
     for name in ("identity_file", "known_hosts", "texlive_root"):
         if payload[name] is not None:
             payload[name] = str(payload[name])

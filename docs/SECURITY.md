@@ -12,15 +12,32 @@ SSH key authentication and strict host-key verification are required. Verify
 the VPS fingerprint through its console or administrator before configuring it.
 A configured local VPN/proxy may carry SSH, but it is not a fallback Claude exit.
 
-Before launch, the configured exit IP/country must match. If this check fails,
-Claude does not start. During use, SSH is monitored and the exit is checked
-periodically (every 30 seconds by default). A confirmed mismatch stops Claude
-when detected; other probe failures stop it after two consecutive failures by
-default. The terminal window stays open, so you can check the connection and restart.
+Before launch, HTTPS must be reachable through the configured VPS route. During
+use, SSH is monitored and HTTPS connectivity is checked every 30 seconds by default.
+Each check probes independent websites in parallel with the full per-target
+timeout; one reachable target is enough. During normal `run`, failed checks warn
+without terminating Claude. SSH process loss triggers reconnects to the same
+configured VPS with 5/10/20/30-second backoff, capped at 30 seconds between attempts.
+Host-key or authentication failure stops retries until the user fixes the cause
+and restarts; host verification is never relaxed. A healthy SSH process is not
+restarted merely because an upstream check failed. No failed prompt is replayed
+by the launcher. Claude may retry a request, or the user may need to do so.
 
-These are periodic checks, not instant prevention of an upstream exit change.
-The check website can also fail independently of Claude. While a connection is
-stalled or a check is pending, the isolated network still has no direct fallback.
+The namespace has no direct route even while Claude is kept alive. Reconnects
+replace only the owned SSH socket in a private, read-only-mounted directory;
+they do not restart Claude or expose the host network. No fallback transport or
+VPN is selected. Login, install and update commands retain fail-fast supervision:
+SSH loss or two consecutive failed checks stop those operations by default.
+
+Exit IP and country are not pinned or compared. `doctor --connect` displays the
+observed exit IP when available; IP lookup failure is informational. Changing a
+VPS upstream exit does not itself stop Claude. Old `expected_ip`/`expected_country`
+config fields are ignored. Host-key verification remains mandatory.
+
+Checks are periodic and the test websites can fail independently of Claude.
+They verify CONNECT, destination TLS and an HTTP response, not account/API health.
+While a connection is stalled or a check is pending, the isolated network still
+has no direct fallback.
 
 ## What is not covered
 
@@ -33,13 +50,15 @@ stalled or a check is pending, the isolated network still has no direct fallback
   for trusted work; it does not hide every credential location or host identifier.
 - The VPS operator can observe destinations and connection timing. This tool does
   not conceal OS metadata or make the client appear to run on the VPS.
-- Exit checks do not measure IP reputation or guarantee against account restrictions.
+- Connectivity checks do not measure IP reputation or guarantee against account restrictions.
 
 ## Your data
 
 The independent profile contains real credentials and conversation history after
 login. Keep it private, along with SSH keys and connection config. Connection logs
-record brief startup/check/exit metadata, not prompts, login codes or account tokens.
+record brief startup/check/exit metadata, including target indexes, elapsed time
+and sanitized failure categories, plus connection-loss/recovery events, not
+prompts, login codes or account tokens.
 
 `init` creates or reuses config and profile directories without clearing old data.
 `install` skips an existing executable entry inside the profile and refuses
@@ -58,11 +77,13 @@ not revoke server-side tokens or erase browser cookies, snapshots or other copie
 ## Reporting problems
 
 Report the command used and the error message. Remove keys, tokens, authorization
-codes, account screenshots and conversation content before sharing. A sanitized
+codes, account screenshots and conversation content before sharing. A diagnostic
 report can be generated with:
 
 ```bash
 vps-route doctor --connect --report ~/.config/vps-route/support.json
 ```
+
+This report includes the observed public exit IP; redact it before sharing if needed.
 
 The tool is under development and has not received an independent security audit.

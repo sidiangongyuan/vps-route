@@ -79,7 +79,7 @@ class SetupTests(unittest.TestCase):
 
     def test_interactive_init_reuses_validator(self):
         answers = iter(["fixture", "203.0.113.1", "", str(self.key), str(self.hosts),
-                        "", "1.1.1.1", "", "", "", ""])
+                        "", "", "", ""])
         config = initialize_config(default_config_path(), prompt=lambda _: next(answers))
         self.assertEqual(config.ssh_port, 22)
         self.assertIsNone(config.ssh_http_proxy)

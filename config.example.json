@@ -5,11 +5,13 @@
   "identity_file": "~/.ssh/id_ed25519_vps_route",
   "known_hosts": "~/.ssh/known_hosts",
   "remote_socket": "/home/xxx/.local/state/claude-launcher/connect.sock",
-  "expected_ip": "xxx.xxx.xxx.xxx",
-  "expected_country": "US",
   "profile": "default",
   "timezone": null,
   "probe_url": "https://ipinfo.io/json",
+  "connectivity_urls": [
+    "https://www.gstatic.com/generate_204",
+    "https://www.cloudflare.com/cdn-cgi/trace"
+  ],
   "interval_seconds": 5,
   "timeout_seconds": 8,
   "runtime_probe_interval_seconds": 30,
