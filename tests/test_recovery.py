@@ -33,24 +33,30 @@ class RecoveryTests(unittest.TestCase):
         self.assertIn("SESSION_STILL_ALIVE", text)
         return text, events
 
-    def test_probe_outage_warns_once_without_closing_session_or_healthy_ssh(self):
-        calls = 0
-
-        def check():
-            nonlocal calls
-            calls += 1
-            return "connectivity_check_timeout" if calls <= 2 else None
-
+    def test_healthy_ssh_needs_no_runtime_probe_or_extra_terminal_messages(self):
         reconnect = Mock()
-        text, events = self.supervise(check, lambda: True, reconnect)
+        with patch("claude_launcher.runner.proxy_reachable",
+                   side_effect=AssertionError("unexpected runtime HTTPS probe")):
+            text, events = self.supervise(None, lambda: True, reconnect)
         reconnect.assert_not_called()
+        self.assertEqual(events, [])
+        self.assertNotIn("vps-route:", text)
+
+    def test_ssh_recovery_is_silent_and_does_not_wait_for_https_probe(self):
+        alive = threading.Event()
+
+        def reconnect(_stop):
+            alive.set()
+
+        with patch("claude_launcher.runner.proxy_reachable",
+                   side_effect=AssertionError("unexpected runtime HTTPS probe")):
+            text, events = self.supervise(None, alive.is_set, reconnect)
         self.assertEqual([e[0] for e in events], ["connection_lost", "connection_restored"])
-        self.assertEqual(text.count("Connection unavailable"), 1)
-        self.assertEqual(text.count("VPS route reachable again"), 1)
+        self.assertNotIn("vps-route:", text)
 
     def test_host_verification_failure_keeps_session_but_stops_retries(self):
         reconnect = Mock(side_effect=RouteError("ssh_host_key_verification_failed"))
-        text, events = self.supervise(lambda: None, lambda: False, reconnect)
+        text, events = self.supervise(None, lambda: False, reconnect)
         self.assertEqual(reconnect.call_count, 1)
         self.assertIn("automatic reconnect stopped", text)
         self.assertEqual(events[-1], ("reconnect_blocked", "ssh_host_key_verification_failed"))
@@ -63,14 +69,15 @@ class RecoveryTests(unittest.TestCase):
             if stop.wait(2):
                 cancelled.set()
 
-        self.supervise(lambda: None, lambda: False, reconnect, duration=0.3)
+        self.supervise(None, lambda: False, reconnect, duration=0.3)
         self.assertTrue(cancelled.is_set())
 
     def test_transient_reconnect_failure_is_not_retried_in_a_busy_loop(self):
         reconnect = Mock(side_effect=RouteError("ssh_tunnel_failed"))
-        _, events = self.supervise(lambda: None, lambda: False, reconnect)
+        text, events = self.supervise(None, lambda: False, reconnect)
         self.assertEqual(reconnect.call_count, 1)  # initial retry delay is five seconds
         self.assertEqual([e[0] for e in events], ["connection_lost"])
+        self.assertNotIn("vps-route:", text)
 
     def test_reconnect_replaces_only_owned_socket_and_honors_cancellation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -151,6 +158,8 @@ class RecoveryTests(unittest.TestCase):
             path = route / "proxy.sock"
             servers = []
             alive = threading.Event()
+            test_finished = threading.Event()
+            disconnect_errors = []
 
             def start():
                 server = socketserver.ThreadingUnixStreamServer(str(path), Echo)
@@ -166,12 +175,18 @@ class RecoveryTests(unittest.TestCase):
                     servers[-1].shutdown()
                     servers[-1].server_close()
 
-            def check():
-                if (workspace / "ready").exists() and not (workspace / "down").exists():
+            def disconnect():
+                try:
+                    deadline = time.monotonic() + 5
+                    while not (workspace / "ready").exists():
+                        if test_finished.wait(0.02):
+                            return
+                        if time.monotonic() > deadline:
+                            raise AssertionError("synthetic client did not become ready")
                     close()
                     (workspace / "down").touch()
-                    return "probe_transport_failure"
-                return None
+                except Exception as exc:
+                    disconnect_errors.append(exc)
 
             def reconnect(stop):
                 deadline = time.monotonic() + 5
@@ -234,14 +249,16 @@ print('SAME_PROCESS_RECOVERED_NO_DIRECT_ROUTE',flush=True)
 time.sleep(0.3)
 '''
             start()
+            disconnector = threading.Thread(target=disconnect, daemon=True)
             try:
                 args, env = sandbox_command(path, profile, workspace,
                                             ["/usr/bin/python3", "-c", script],
                                             reconnectable=True)
+                disconnector.start()
                 with open(os.devnull, "rb") as empty, tempfile.TemporaryFile() as output:
                     events = []
                     result = run_supervised(
-                        args, env, check, close, alive.is_set, 0.02,
+                        args, env, None, close, alive.is_set, 0.02,
                         input_fd=empty.fileno(), output_fd=output.fileno(),
                         reconnect=reconnect, connection_event=lambda *event: events.append(event),
                     )
@@ -249,10 +266,15 @@ time.sleep(0.3)
                     text = output.read().decode()
                 self.assertEqual(result, (0, "child_exited"), text)
                 self.assertIn("SAME_PROCESS_RECOVERED_NO_DIRECT_ROUTE", text)
+                self.assertNotIn("vps-route:", text)
                 self.assertEqual([e[0] for e in events],
                                  ["connection_lost", "connection_restored"])
             finally:
+                test_finished.set()
+                if disconnector.ident is not None:
+                    disconnector.join(timeout=2)
                 close()
+            self.assertEqual(disconnect_errors, [])
 
 
 if __name__ == "__main__":

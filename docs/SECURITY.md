@@ -12,16 +12,18 @@ SSH key authentication and strict host-key verification are required. Verify
 the VPS fingerprint through its console or administrator before configuring it.
 A configured local VPN/proxy may carry SSH, but it is not a fallback Claude exit.
 
-Before launch, HTTPS must be reachable through the configured VPS route. During
-use, SSH is monitored and HTTPS connectivity is checked every 30 seconds by default.
-Each check probes independent websites in parallel with the full per-target
-timeout; one reachable target is enough. During normal `run`, failed checks warn
-without terminating Claude. SSH process loss triggers reconnects to the same
-configured VPS with 5/10/20/30-second backoff, capped at 30 seconds between attempts.
+Before launch, HTTPS must be reachable through the configured VPS route. Preflight
+probes independent websites in parallel; one reachable target is enough. During
+normal `run`, there are no periodic HTTPS probes or launcher connection-status
+messages. Claude handles request errors and its own retries; the launcher does
+not terminate Claude for a network outage. SSH process loss triggers reconnects
+to the same configured VPS with 5/10/20/30-second backoff, capped at 30 seconds
+between attempts.
 Host-key or authentication failure stops retries until the user fixes the cause
-and restarts; host verification is never relaxed. A healthy SSH process is not
-restarted merely because an upstream check failed. No failed prompt is replayed
-by the launcher. Claude may retry a request, or the user may need to do so.
+and restarts; this blocked state shows an actionable notice. Host verification is
+never relaxed. A healthy SSH process is not restarted for upstream request errors.
+No failed prompt is replayed by the launcher. Claude may retry a request, or the
+user may need to do so.
 
 The namespace has no direct route even while Claude is kept alive. Reconnects
 replace only the owned SSH socket in a private, read-only-mounted directory;
@@ -34,8 +36,10 @@ observed exit IP when available; IP lookup failure is informational. Changing a
 VPS upstream exit does not itself stop Claude. Old `expected_ip`/`expected_country`
 config fields are ignored. Host-key verification remains mandatory.
 
-Checks are periodic and the test websites can fail independently of Claude.
-They verify CONNECT, destination TLS and an HTTP response, not account/API health.
+Preflight/diagnostic checks and maintenance-command probes verify CONNECT,
+destination TLS and an HTTP response, not account/API health. Test websites can
+fail independently of Claude. SSH recovery events describe only SSH transport;
+they do not establish upstream or API recovery.
 While a connection is stalled or a check is pending, the isolated network still
 has no direct fallback.
 
@@ -57,7 +61,7 @@ has no direct fallback.
 The independent profile contains real credentials and conversation history after
 login. Keep it private, along with SSH keys and connection config. Connection logs
 record brief startup/check/exit metadata, including target indexes, elapsed time
-and sanitized failure categories, plus connection-loss/recovery events, not
+and sanitized failure categories, plus SSH connection-loss/recovery events, not
 prompts, login codes or account tokens.
 
 `init` creates or reuses config and profile directories without clearing old data.

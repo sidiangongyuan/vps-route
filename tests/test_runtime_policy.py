@@ -228,7 +228,6 @@ class RuntimePolicyTests(unittest.TestCase):
                             self.assertIsInstance(call.args[2], RuntimeConnectivityMonitor)
                             self.assertIs(call.args[2].config, config)
                             self.assertEqual(call.args[5], 30)
-                            self.assertFalse(call.args[2].report_immediately)
                             self.assertIsNone(call.kwargs.get("reconnect"))
 
                 with patch("claude_launcher.cli.namespace_available", return_value=True), \
@@ -241,7 +240,7 @@ class RuntimePolicyTests(unittest.TestCase):
                         patch("claude_launcher.cli.receipt"):
                     self.assertEqual(launch(config, home, []), 0)
                     self.assertTrue(sandbox.call_args.kwargs["reconnectable"])
-                    self.assertTrue(supervise.call_args.args[2].report_immediately)
+                    self.assertIsNone(supervise.call_args.args[2])
                     self.assertIs(supervise.call_args.kwargs["reconnect"],
                                   tunnel.return_value.reconnect)
 
@@ -282,14 +281,6 @@ class RuntimePolicyTests(unittest.TestCase):
             monitor = RuntimeConnectivityMonitor(replace(config, runtime_probe_failures=1),
                                                  Path("fixture.sock"))
             self.assertEqual(monitor(), "probe_http_failure")
-
-    def test_warning_only_monitor_reports_real_failure_and_recovery_immediately(self):
-        config = Config("203.0.113.1", "fixture", 22, Path("key"), Path("hosts"), "/unused")
-        monitor = RuntimeConnectivityMonitor(config, Path("fixture.sock"), report_immediately=True)
-        with patch("claude_launcher.runner.connectivity_check",
-                   side_effect=["probe_http_failure", None]):
-            self.assertEqual(monitor(), "probe_http_failure")
-            self.assertIsNone(monitor())
 
     def test_old_config_defaults_and_runtime_policy_validation(self):
         values = {

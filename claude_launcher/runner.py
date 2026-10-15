@@ -424,7 +424,7 @@ def run_supervised(
     reconnect: Callable[[threading.Event], None] | None = None,
     connection_event: Callable[[str, str | None], None] | None = None,
 ) -> tuple[int, str]:
-    """Monitor SSH liveness and the supplied upstream/exit check independently."""
+    """Recover daily SSH sessions, or apply fatal checks to maintenance commands."""
     input_fd = sys.stdin.fileno() if input_fd is None else input_fd
     output_fd = sys.stdout.fileno() if output_fd is None else output_fd
     failure: list[str] = []
@@ -473,12 +473,12 @@ def run_supervised(
 
     def watch_recovering() -> None:
         # One worker owns reconnects. The main thread remains responsive to input
-        # and termination, and serializes notices with child terminal output.
-        next_probe = time.monotonic() + interval
+        # and termination. Daily runs leave HTTPS errors/retries to Claude.
         next_retry = 0.0
         backoff = 5.0
         state = "online"
         blocked = False
+        stable_since = time.monotonic()
 
         def transition(new_state: str, reason: str | None = None) -> None:
             nonlocal state
@@ -487,6 +487,16 @@ def run_supervised(
                 notices.put((new_state, reason))
 
         while not finished.wait(0.1):
+            if route_alive():
+                if state != "online":
+                    transition("connection_restored")
+                    state = "online"
+                    stable_since = time.monotonic()
+                elif time.monotonic() - stable_since >= interval:
+                    # A briefly revived SSH process must not cause rapid retries.
+                    backoff = 5.0
+                    next_retry = 0.0
+                continue
             if not route_alive():
                 if state == "online":
                     transition("connection_lost", "ssh_tunnel_lost")
@@ -512,24 +522,6 @@ def run_supervised(
                     continue
                 next_retry = time.monotonic() + backoff
                 backoff = min(backoff * 2, 30.0)
-                next_probe = 0.0
-            if time.monotonic() < next_probe:
-                continue
-            try:
-                reason = check() if check is not None else None
-            except Exception:
-                reason = "connectivity_check_failed"
-            if finished.is_set():
-                return
-            next_probe = time.monotonic() + interval
-            if reason:
-                transition("connection_lost", reason)
-            else:
-                if state != "online":
-                    transition("connection_restored")
-                    state = "online"
-                backoff = 5.0
-                next_retry = 0.0
 
     def resize(*_unused: object) -> None:
         if os.isatty(input_fd):
@@ -591,16 +583,12 @@ def run_supervised(
                 break
             while not notices.empty():
                 event, detail = notices.get_nowait()
-                messages = {
-                    "connection_lost": "Connection unavailable; session kept open. "
-                                       "Waiting for the configured VPS route; no direct fallback.",
-                    "connection_restored": "VPS route reachable again. "
-                                            "Retry any interrupted request if needed.",
-                    "reconnect_blocked": "SSH verification/authentication failed; automatic "
-                                         "reconnect stopped. Check configuration and restart; "
-                                         "session kept open, no direct fallback.",
-                }
-                render(("\r\nvps-route: " + messages[event] + "\r\n").encode())
+                # Claude owns request errors/retries. Only a blocked SSH recovery
+                # needs a launcher notice because waiting alone cannot fix it.
+                if event == "reconnect_blocked":
+                    render(b"\r\nvps-route: SSH could not be safely reconnected; automatic "
+                           b"reconnect stopped. Check configuration and restart; "
+                           b"session kept open, no direct fallback.\r\n")
                 if connection_event is not None:
                     try:
                         connection_event(event, detail)
@@ -718,13 +706,11 @@ class RuntimeConnectivityMonitor:
     """Stop after consecutive unreachable checks; exit IP is not a condition."""
 
     def __init__(self, config: Config, socket_path: Path,
-                 record: Callable[[list[dict]], None] | None = None,
-                 *, report_immediately: bool = False) -> None:
+                 record: Callable[[list[dict]], None] | None = None) -> None:
         self.config = config
         self.socket_path = socket_path
         self.consecutive_failures = 0
         self.record = record
-        self.report_immediately = report_immediately
 
     def __call__(self) -> str | None:
         reason = connectivity_check(self.config, self.socket_path, self.record)
@@ -732,7 +718,7 @@ class RuntimeConnectivityMonitor:
             self.consecutive_failures = 0
             return None
         self.consecutive_failures += 1
-        if self.report_immediately or self.consecutive_failures >= self.config.runtime_probe_failures:
+        if self.consecutive_failures >= self.config.runtime_probe_failures:
             return reason
         # The network namespace remains fail-closed during this grace period.
         return None

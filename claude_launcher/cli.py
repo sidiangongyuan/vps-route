@@ -249,8 +249,9 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
             )
             code, reason = run_supervised(
                 command, environment,
-                RuntimeConnectivityMonitor(config, tunnel.socket_path, audit.connection_check,
-                                           report_immediately=keep_session),
+                None if keep_session else RuntimeConnectivityMonitor(
+                    config, tunnel.socket_path, audit.connection_check,
+                ),
                 tunnel.close, tunnel.alive,
                 config.runtime_probe_interval_seconds,
                 reconnect=tunnel.reconnect if keep_session else None,

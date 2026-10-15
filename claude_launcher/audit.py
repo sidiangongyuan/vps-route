@@ -96,7 +96,8 @@ class AuditLog:
                            reason=self.reason if self.reason in SAFE_REASONS else "operation_failed",
                            duration_seconds=round(time.monotonic() - self.started, 3))
         if event in {"connection_lost", "connection_restored", "reconnect_blocked"}:
-            payload.update(session_preserved=True, direct_fallback=False)
+            payload.update(session_preserved=True, direct_fallback=False,
+                           stage="ssh_transport")
             if connection_reason is not None:
                 payload["reason"] = (connection_reason if connection_reason in SAFE_REASONS
                                      else "operation_failed")

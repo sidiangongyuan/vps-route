@@ -97,12 +97,14 @@ Your existing Claude data is not moved or deleted. Normal runs support skills,
 project `CLAUDE.md`, rules and automatic memory. Hooks, MCP, account connectors,
 remote control and cloud skill sync are disabled.
 
-Before launch, the tool checks HTTPS connectivity through your VPS. During use,
-it monitors SSH and periodically checks independent HTTPS targets in parallel;
-one reachable target is enough. During `run`, an outage shows a warning but keeps
-your session open. Lost SSH connections are retried through the same configured
-VPS, without a direct fallback. Once connectivity returns, retry interrupted
-requests if needed. Login, install and update commands still stop on route failure.
+Before launch, the tool checks HTTPS connectivity through your VPS. During `run`,
+Claude displays request errors and handles its own retries. The tool keeps your
+session open and silently reconnects lost SSH connections through the same
+configured VPS, without a direct fallback. There are no periodic HTTPS probes or
+extra connection-status messages during daily use. SSH identity/authentication
+failures still show a notice when automatic reconnect cannot continue.
+Once connectivity returns, retry interrupted requests if needed. Login, install
+and update commands still stop on route failure.
 A changed exit IP does not stop Claude.
 `doctor --connect` shows the observed exit IP for information only; a failed IP
 lookup does not fail an otherwise successful connectivity check.
