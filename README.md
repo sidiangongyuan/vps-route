@@ -3,8 +3,9 @@
 Run official Claude Code in a separate local environment, with its HTTPS traffic
 routed through your own VPS over SSH. If the connection fails, there is no direct fallback.
 
-Linux only. Requires your own VPS and Claude account. Claude is downloaded during
-setup, not bundled with the tool. Not affiliated with Anthropic.
+Linux only; verified on Ubuntu 22.04, other distributions are untested. Requires
+your own VPS and Claude account. Claude is downloaded during setup, not bundled
+with the tool. Not affiliated with Anthropic.
 
 [中文使用说明](docs/USAGE.zh-CN.md) · [First-time setup example](docs/FIRST_RUN.zh-CN.md)
 · [Security](docs/SECURITY.md)
@@ -26,14 +27,13 @@ sudo apt-get install git gh python3 python3-venv pipx bubblewrap openssh-client 
 
 ## Install the tool
 
-Clone the repository with an account that has access, then install:
-
-If needed, sign in to GitHub first with `gh auth login`.
+The repository is private. Sign in with a GitHub account that has access and let
+git use that login, then install directly from GitHub (no clone needed):
 
 ```bash
-gh repo clone sidiangongyuan/vps-route
-cd vps-route
-pipx install .
+gh auth login
+gh auth setup-git
+pipx install git+https://github.com/sidiangongyuan/vps-route.git
 pipx ensurepath
 ```
 
@@ -79,7 +79,8 @@ does not replace an existing `claude` command or configure the VS Code extension
 | --- | --- |
 | Check the connection and exit | `vps-route doctor --connect` |
 | Check login | `vps-route auth status --text` |
-| Update Claude | `vps-route update` |
+| Update Claude (not this tool) | `vps-route update` |
+| Update this tool | `vps-route self-update --apply` |
 | Show Claude's version | `vps-route native-version` |
 | Resume a conversation | `vps-route run -- --resume SESSION_ID` |
 | Disable customizations for troubleshooting | `vps-route run --safe-mode` |
@@ -93,9 +94,22 @@ Claude's installation, login and history live in:
 ~/.local/share/claude-launcher/profiles/default/
 ```
 
-Your existing Claude data is not moved or deleted. Normal runs support skills,
-project `CLAUDE.md`, rules and automatic memory. Hooks, MCP, account connectors,
-remote control and cloud skill sync are disabled.
+Your existing Claude data (`~/.claude`, `~/.claude.json`, an existing `claude`
+command) is never moved or deleted, including by `reset` and `uninstall`.
+Normal runs support skills, project `CLAUDE.md`, rules and automatic memory.
+Hooks, MCP, account connectors, remote control and cloud skill sync are disabled.
+
+## What Claude can reach
+
+Inside a `vps-route run` session, only HTTPS on port 443 to public hosts works,
+through your VPS. This covers the Claude API, `pip`/`npm` downloads and HTTPS
+web access. These do **not** work inside the session:
+
+- `git push`/`git clone` over SSH (`git@github.com:...`), or any other SSH connection
+- plain `http://` URLs and ports other than 443
+- private/LAN addresses and services on your computer (`localhost` of the host)
+
+Run such commands from your normal terminal instead.
 
 Before launch, the tool checks HTTPS connectivity through your VPS. During `run`,
 Claude displays request errors and handles its own retries. The tool keeps your
@@ -112,12 +126,24 @@ Browsers and unrelated applications are not covered. See [Security](docs/SECURIT
 
 ## Update or uninstall the tool
 
-Close active VPS Route sessions, then update from your checkout:
+Close active VPS Route sessions first. `self-update` previews by default and
+installs only a published GitHub release:
 
 ```bash
-git pull --ff-only
-pipx reinstall vps-route
+vps-route self-update            # show current and latest version
+vps-route self-update --apply    # install the latest release
+vps-route self-update --rollback --apply   # return to the previous version
 ```
+
+It needs the same `gh` login used for installation. If `self-update` fails,
+reinstall the latest code directly:
+
+```bash
+pipx install --force git+https://github.com/sidiangongyuan/vps-route.git
+```
+
+Updating the tool does not redeploy the VPS service. If `vps-route server-version`
+reports `"compatible": false`, run `vps-route setup-vps --apply` again.
 
 To uninstall, review the deletion list first:
 

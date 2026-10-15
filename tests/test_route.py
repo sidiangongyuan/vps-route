@@ -1,6 +1,6 @@
 """Local integration checks for isolation and owned-process termination.
 
-All network traffic terminates at test-owned local sockets. No HICC command,
+All network traffic terminates at test-owned local sockets. No
 Claude executable, account file, real VPS, or external IP service is involved.
 """
 
@@ -318,7 +318,7 @@ class RouteIntegration(unittest.TestCase):
     def test_12_account_archive_cannot_be_used_as_workspace(self):
         profile = self.root / "profile-protected-workspace"
         profile.mkdir(mode=0o700)
-        workspace = Path.home() / ".local/share/claude-launcher/legacy-archives"
+        workspace = Path.home() / ".local/share/claude-launcher/profiles/.archives"
         with self.assertRaisesRegex(RouteError, "account_or_key_directory"):
             sandbox_command(self.socket_path, profile, workspace, ["/bin/true"])
 

@@ -1,7 +1,8 @@
 # VPS Route 使用说明
 
 在独立环境中使用官方 Claude Code，通过你自己的 VPS 联网；连接失败不回退直连。
-目前仅支持 Linux，不包含 Claude 账号、VPS 或浏览器，也没有发布到 PyPI。
+目前仅支持 Linux，且只在 Ubuntu 22.04 上验证过，其他发行版未经测试。
+不包含 Claude 账号、VPS 或浏览器，也没有发布到 PyPI。
 
 首次使用请看 [完整配置例子](FIRST_RUN.zh-CN.md)。
 
@@ -18,12 +19,13 @@ sudo apt-get install git gh python3 python3-venv pipx bubblewrap openssh-client 
   netcat-openbsd curl ca-certificates
 ```
 
-有仓库访问权限的 GitHub 账号执行；尚未登录时先运行 `gh auth login`：
+仓库是私有的。用有访问权限的 GitHub 账号登录，并让 git 使用这个登录，
+然后直接从 GitHub 安装，不需要 clone 仓库：
 
 ```bash
-gh repo clone sidiangongyuan/vps-route
-cd vps-route
-pipx install .
+gh auth login
+gh auth setup-git
+pipx install git+https://github.com/sidiangongyuan/vps-route.git
 pipx ensurepath
 ```
 
@@ -66,7 +68,8 @@ VS Code Remote SSH 集成终端也是同样的操作。新用户请使用 `vps-r
 | --- | --- |
 | 检查连接与出口 | `vps-route doctor --connect` |
 | 查看登录状态 | `vps-route auth status --text` |
-| 更新 Claude | `vps-route update` |
+| 更新 Claude（不是本工具） | `vps-route update` |
+| 更新本工具 | `vps-route self-update --apply` |
 | 查看 Claude 版本 | `vps-route native-version` |
 | 恢复会话 | `vps-route run -- --resume 会话ID` |
 | 排查技能或项目配置问题 | `vps-route run --safe-mode` |
@@ -79,6 +82,20 @@ VS Code Remote SSH 集成终端也是同样的操作。新用户请使用 `vps-r
 支持项目 `CLAUDE.md`、规则、自动记忆和技能。独立目录的 `.claude/skills/`
 优先加载，也会只读加载本机 `~/.agents/skills/` 和 `~/.claude/skills/` 中符合要求的技能。
 Hooks、MCP、账号 connectors、remote control 和云端技能同步关闭。
+
+本机原有的 `~/.claude`、`~/.claude.json` 和已有的 `claude` 命令不会被移动或删除，
+`reset` 和 `uninstall` 也不会碰它们。
+
+### Claude 能访问什么
+
+在 `vps-route run` 会话里，只有经 VPS 访问公网 HTTPS（443 端口）可以连通，
+包括 Claude API、`pip`/`npm` 下载和 HTTPS 网页。以下操作在会话里**不可用**：
+
+- 通过 SSH 的 `git push`/`git clone`（`git@github.com:...`），以及任何 SSH 连接
+- `http://` 网址和 443 以外的端口
+- 内网地址，以及本机上运行的服务（宿主机的 `localhost`）
+
+这类命令请在普通终端里执行。
 
 ## 4. 连接保护
 
@@ -110,23 +127,32 @@ SSH 重连成功不代表上游/API 已恢复，实际请求结果由 Claude 展
 `runtime_probe_interval_seconds` 和 `runtime_probe_failures` 仅控制这类命令的周期检测。
 
 手动终止工具等异常退出时自动重置终端，保留正常运行时的鼠标功能。重置可能清空当前屏幕显示，
-不会删除 Claude 会话记录。若旧 Orca 标签页仍刷坐标，先执行 `reset`；无效则新建终端标签页。
+不会删除 Claude 会话记录。若终端仍在刷坐标数字，先执行系统命令 `reset`；无效则新开终端标签页。
 
 浏览器、点击后在本机打开的链接、VS Code 扩展和其他应用不受该网络保护。
 更多边界见 [安全说明](SECURITY.md)。
 
 ## 5. 更新工具
 
-`vps-route update` 更新的是 Claude。更新 VPS Route 本身，请先关闭它启动的会话，
-然后在仓库目录执行：
+`vps-route update` 更新的是 Claude。更新 VPS Route 本身用 `self-update`，
+需先关闭它启动的所有会话。默认只预览，加 `--apply` 才安装，只安装 GitHub 上正式发布的版本：
 
 ```bash
-git pull --ff-only
-pipx reinstall vps-route
+vps-route self-update                      # 查看当前版本和最新版本
+vps-route self-update --apply              # 升级到最新版本
+vps-route self-update --rollback --apply   # 回到升级前的版本
 ```
 
-虚拟环境安装则执行 `.venv/bin/python -m pip install --upgrade .`。
-更新本机工具不会自动部署 VPS 服务。
+需要安装时用的同一个 `gh` 登录。如果 `self-update` 失败，直接重装最新代码：
+
+```bash
+pipx install --force git+https://github.com/sidiangongyuan/vps-route.git
+```
+
+虚拟环境安装则执行 `~/.venvs/vps-route/bin/pip install --upgrade --force-reinstall git+https://github.com/sidiangongyuan/vps-route.git`。
+
+更新本机工具不会自动更新 VPS 服务。若 `vps-route server-version` 显示
+`"compatible": false`，再执行一次 `vps-route setup-vps --apply`。
 
 ## 6. 卸载
 

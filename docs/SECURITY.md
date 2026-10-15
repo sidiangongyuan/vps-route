@@ -52,6 +52,10 @@ has no direct fallback.
   The tool is not a sandbox for running hostile code.
 - Optional `research_filesystem` access exposes more host files. Enable it only
   for trusted work; it does not hide every credential location or host identifier.
+  It hides common credential locations (`.ssh`, `.config`, `.aws`, shell rc files,
+  `clash*`/`mihomo*` proxy directories and similar). Add your own HOME entries
+  with `private_home_entries`, for example
+  `vps-route config set private_home_entries '[".my-vpn", ".tool-*"]' --apply`.
 - The VPS operator can observe destinations and connection timing. This tool does
   not conceal OS metadata or make the client appear to run on the VPS.
 - Connectivity checks do not measure IP reputation or guarantee against account restrictions.
@@ -65,6 +69,8 @@ and sanitized failure categories, plus SSH connection-loss/recovery events, not
 prompts, login codes or account tokens.
 
 `init` creates or reuses config and profile directories without clearing old data.
+`reset` archives only the tool profile; it never moves `~/.claude`, `~/.claude.json`
+or an existing `claude` command.
 `install` skips an existing executable entry inside the profile and refuses
 invalid or external entries. It does not reset account files.
 

@@ -18,5 +18,6 @@
   "runtime_probe_failures": 2,
   "ssh_http_proxy": null,
   "texlive_root": null,
-  "research_filesystem": false
+  "research_filesystem": false,
+  "private_home_entries": []
 }

@@ -1,6 +1,7 @@
 """CLI policy routing without starting the real route or account client."""
 
 import contextlib
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -80,11 +81,14 @@ class CliPolicyTests(unittest.TestCase):
         self.assertEqual(launch.call_args.args[1],
                          self.config.profile_home / "auth-workspace")
 
-    def test_legacy_archive_apply_requires_explicit_retirement_flag(self):
-        with patch.object(sys, "argv", ["vps-route", "legacy-archive", "--apply"]), \
-             patch("claude_launcher.legacy_cutover.archive_legacy_state") as archive:
-            self.assertEqual(cli.main(), 69)
-            archive.assert_not_called()
+    def test_removed_host_takeover_commands_are_rejected(self):
+        for argv in (["legacy-archive", "--apply"], ["cutover-activate", "--archive", "x"],
+                     ["doctor", "--observe-hicc"]):
+            with patch.object(sys, "argv", ["vps-route", *argv]), \
+                 contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as raised:
+                    cli.main()
+            self.assertEqual(raised.exception.code, 2)
 
     def test_full_reset_defaults_to_preview_without_install_or_mutation(self):
         with patch.object(sys, "argv", ["vps-route", "--config", "/unused", "reset"]), \

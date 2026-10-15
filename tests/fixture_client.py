@@ -1,4 +1,4 @@
-"""Synthetic workload; never imports or launches Claude/HICC."""
+"""Synthetic workload; never imports or launches Claude."""
 
 import http.client
 import json
@@ -19,7 +19,7 @@ if mode == "network":
     assert "ALL_PROXY" not in os.environ
     assert "all_proxy" not in os.environ
     baseline_home = Path(sys.argv[3])
-    for name in (".claude", ".claude.json", ".hicc", ".ssh", ".codex"):
+    for name in (".claude", ".claude.json", ".ssh", ".codex"):
         assert not (baseline_home / name).exists(), "baseline state visible in isolated client"
     assert len(Path("/proc/net/route").read_text().splitlines()) == 1
     for row in Path("/proc/net/dev").read_text().splitlines()[2:]:

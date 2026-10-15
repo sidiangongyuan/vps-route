@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from claude_launcher.cli import main
-from claude_launcher.legacy_cutover import wrapper_script
 from claude_launcher.lifecycle import (
     _package_command as detect_package_command, uninstall_inventory, uninstall_local,
 )
@@ -25,8 +24,6 @@ class LifecycleTests(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
         self.stack.enter_context(patch.object(Path, "home", return_value=self.home))
-        self.stack.enter_context(patch(
-            "claude_launcher.lifecycle._same_user_legacy_process_running", return_value=False))
         self.stack.enter_context(patch(
             "claude_launcher.lifecycle._profile_is_running", return_value=False))
         self.stack.enter_context(patch("claude_launcher.lifecycle._package_command", return_value=None))
@@ -52,9 +49,9 @@ class LifecycleTests(unittest.TestCase):
         self.server = self.home / ".local/share/claude-launcher/server/remote.py"
         self.server.parent.mkdir()
         self.server.write_text("do not change the server")
-        self.wrapper = self.home / ".local/bin/claude"
-        self.wrapper.parent.mkdir(parents=True)
-        self.wrapper.write_text(wrapper_script(self.home / ".local/bin/vps-route"))
+        self.host_claude = self.home / ".local/bin/claude"
+        self.host_claude.parent.mkdir(parents=True)
+        self.host_claude.write_text("#!/bin/sh\necho user's own Claude CLI\n")
 
     def test_preview_lists_profiles_and_backups_without_reading_config_or_deleting(self):
         result = uninstall_inventory(self.config)
@@ -67,9 +64,10 @@ class LifecycleTests(unittest.TestCase):
         with patch("claude_launcher.lifecycle.subprocess.run") as run:
             result = uninstall_local(self.config, yes=True)
         run.assert_not_called()
-        for path in (self.profile, self.archive, self.legacy, self.logs, self.config, self.wrapper):
+        for path in (self.profile, self.archive, self.legacy, self.logs, self.config):
             self.assertFalse(path.exists(), path)
-        for path in (self.outside / "source.py", self.key, self.shared, self.server):
+        for path in (self.outside / "source.py", self.key, self.shared, self.server,
+                     self.host_claude):
             self.assertTrue(path.exists(), path)
         self.assertFalse(result["vps_changed"])
 
@@ -99,19 +97,19 @@ class LifecycleTests(unittest.TestCase):
             path.unlink()
         self.config.parent.rmdir()
         self.config.parent.symlink_to(self.outside, target_is_directory=True)
-        with self.assertRaisesRegex(RouteError, "unsafe_legacy_path"):
+        with self.assertRaisesRegex(RouteError, "unsafe_tool_path"):
             uninstall_local(self.config, yes=True)
         self.assertTrue(self.profile.exists())
         self.assertTrue((self.outside / "source.py").exists())
 
-    def test_unrelated_claude_binary_is_not_removed(self):
-        self.wrapper.write_text("#!/bin/sh\necho unrelated CLI\n")
+    def test_host_claude_binary_and_processes_do_not_matter(self):
+        self.host_claude.unlink()
+        self.host_claude.symlink_to(self.outside / "source.py")
+        # Only processes started from tool profiles block cleanup.
+        with patch("claude_launcher.sessions.list_sessions", return_value=[]):
+            self.assertFalse(uninstall_inventory(self.config)["process_running"])
         uninstall_local(self.config, yes=True)
-        self.assertTrue(self.wrapper.exists())
-        self.wrapper.unlink()
-        self.wrapper.symlink_to(self.outside / "source.py")
-        uninstall_local(self.config, yes=True)
-        self.assertTrue(self.wrapper.is_symlink())
+        self.assertTrue(self.host_claude.is_symlink())
         self.assertTrue((self.outside / "source.py").exists())
 
     def test_configured_key_in_data_root_requires_explicit_preservation(self):

@@ -13,12 +13,50 @@ from pathlib import Path
 from typing import Callable
 
 from .config import Config
-from .legacy_cutover import (
-    ARCHIVE_PARENT, LEGACY_ITEMS, ROUTE, WRAPPER, _home, _safe_path,
-    _same_user_legacy_process_running, archive_legacy_state, legacy_inventory, wrapper_script,
-)
-from .profile_reset import _profile_is_running, reset_profile
+from .profile_reset import _profile_is_running
 from .wire import RouteError
+
+
+# Archives written by pre-0.4 releases; removed with the other tool backups.
+OLD_ARCHIVES = Path(".local/share/claude-launcher/legacy-archives")
+
+
+def _safe_path(home: Path, path: Path, *, expect_directory: bool | None = None) -> bool:
+    """Validate an existing user-owned path without following a symlink."""
+    if not path.is_relative_to(home):
+        raise RouteError("path_outside_home")
+    current = path
+    present = True
+    while current != home:
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            if current == path:
+                present = False
+            current = current.parent
+            continue
+        if stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid():
+            raise RouteError("unsafe_tool_path")
+        current = current.parent
+    if not present:
+        return False
+    mode = path.lstat().st_mode
+    if expect_directory is True and not stat.S_ISDIR(mode):
+        raise RouteError("unsafe_tool_path")
+    if expect_directory is False and not stat.S_ISREG(mode):
+        raise RouteError("unsafe_tool_path")
+    if expect_directory is None and not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+        raise RouteError("unsafe_tool_path")
+    if path.is_dir() and os.path.ismount(path):
+        raise RouteError("tool_path_is_mount")
+    return True
+
+
+def _home() -> Path:
+    root = Path.home()
+    if root.is_symlink() or not root.is_dir() or root.stat().st_uid != os.getuid():
+        raise RouteError("unsafe_home")
+    return root.absolute()
 
 
 def confirm_operation(message: str, *, yes: bool = False,
@@ -31,36 +69,6 @@ def confirm_operation(message: str, *, yes: bool = False,
         raise RouteError("confirmation_required; inspect_--dry-run_then_use_-y") from None
     if answer not in {"y", "yes"}:
         raise RouteError("operation_cancelled; no_changes_made")
-
-
-def initialization_inventory(config: Config) -> dict[str, object]:
-    """Inspect names only, without reading credentials or following directory links."""
-    from .profile_reset import full_reset_inventory
-
-    inventory = full_reset_inventory(config, include_hicc=False)
-    legacy = legacy_inventory(include_hicc=False)
-    return {
-        "archive_paths": [str(Path.home() / LEGACY_ITEMS[name]) for name in legacy["present"]]
-        + ([str(config.profile_home)] if inventory["profile_present"] else []),
-        "process_running": inventory["profile_process_running"]
-        or legacy["legacy_process_running"],
-        "permanent_deletion": False,
-        "project_files_shared_skills_ssh_and_vps_preserved": True,
-    }
-
-
-def archive_for_initialization(config: Config) -> dict[str, str | None]:
-    inventory = initialization_inventory(config)
-    if inventory["process_running"]:
-        raise RouteError("claude_or_hicc_still_running; close_sessions_before_init")
-    legacy = legacy_inventory(include_hicc=False)
-    archive = archive_legacy_state(include_hicc=False) if legacy["present"] else None
-    try:
-        profile = reset_profile(config)
-    except (RouteError, OSError) as exc:
-        raise RouteError(f"init_incomplete; legacy_archive={archive}; {exc}") from None
-    return {"legacy_archive": str(archive) if archive else None,
-            "profile_archive": str(profile) if profile else None}
 
 
 def _validate_tree(path: Path) -> None:
@@ -105,7 +113,7 @@ def _package_command() -> list[str] | None:
 def uninstall_inventory(config_path: Path, *, keep_profiles: bool = False,
                         keep_backups: bool = False, keep_logs: bool = False,
                         keep_config: bool = False, keep_package: bool = False) -> dict[str, object]:
-    home = _home(None)
+    home = _home()
     paths: list[Path] = []
     profiles = home / ".local/share/claude-launcher/profiles"
     if not keep_profiles and _safe_path(home, profiles, expect_directory=True):
@@ -114,7 +122,7 @@ def uninstall_inventory(config_path: Path, *, keep_profiles: bool = False,
                 _safe_path(home, entry, expect_directory=True)
                 paths.append(entry)
     if not keep_backups:
-        paths.extend([profiles / ".archives", home / ARCHIVE_PARENT,
+        paths.extend([profiles / ".archives", home / OLD_ARCHIVES,
                       home / ".local/state/claude-launcher/updates"])
     if not keep_logs:
         paths.append(home / ".local/state/claude-launcher/logs")
@@ -132,11 +140,6 @@ def uninstall_inventory(config_path: Path, *, keep_profiles: bool = False,
                 except RouteError:
                     raise RouteError("custom_config_not_identifiable; remove_it_manually") from None
             paths.append(supplied)
-    # Remove only the exact wrapper we generated; do not restore a direct CLI.
-    wrapper = home / WRAPPER
-    if not wrapper.is_symlink() and _safe_path(home, wrapper, expect_directory=False):
-        if wrapper.stat().st_size < 65536 and wrapper.read_text() == wrapper_script(home / ROUTE):
-            paths.append(wrapper)
     present: list[Path] = []
     for path in paths:
         if _safe_path(home, path):
@@ -163,8 +166,8 @@ def uninstall_inventory(config_path: Path, *, keep_profiles: bool = False,
     return {
         "delete_paths": [str(path) for path in present],
         "package_command": command,
+        # Only processes started from tool profiles; an unrelated claude CLI may keep running.
         "process_running": tracked_running or maintenance_in_use()
-        or _same_user_legacy_process_running()
         or _profile_is_running(profiles),
         "local_only": True,
         "permanent_deletion": True,
@@ -178,7 +181,7 @@ def uninstall_local(config_path: Path, *, yes: bool = False,
     inventory = uninstall_inventory(config_path, **options)
     print(json.dumps(inventory, indent=2))
     if inventory["process_running"]:
-        raise RouteError("claude_or_hicc_still_running; close_sessions_before_uninstall")
+        raise RouteError("vps_route_sessions_still_running; close_them_before_uninstall")
     confirm_operation("Permanently delete these local files and backups?", yes=yes, prompt=prompt)
     # Recheck after the user-facing wait. -y never bypasses ownership or process checks.
     fresh = uninstall_inventory(config_path, **options)

@@ -10,16 +10,16 @@ from .wire import RouteError
 
 RESEARCH_ROOTS = (Path('/mnt'), Path('/media'), Path('/opt'), Path('/srv'))
 PRIVATE_NAMES = {
-    '.claude', '.claude.json', '.hicc', '.codex', '.ssh', '.local', '.config', '.cache',
+    '.claude', '.claude.json', '.codex', '.ssh', '.local', '.config', '.cache',
     '.aws', '.azure', '.kube', '.docker', '.gnupg', '.aliyun', '.terraform.d',
     '.netrc', '.npmrc', '.pypirc', '.git-credentials', '.gitconfig', '.s3cfg', '.boto',
     '.gemini', '.copilot', '.cursor', '.cursor-server', '.vscode', '.vscode-server',
-    '.codegeex', '.cc-switch', '.ufomiao', '.agents', '.Xauthority',
-    '.tokentracker', '.tokentracker-safe-server', '.tokentracker-runtime',
-    'clash', 'clash-for-lab-clean', 'clash-for-linux-install', 'mihomo-url.bak',
-    '.profile', '.pam_environment', '.viminfo', '.wget-hsts', '.condarc', '.condarc.save',
+    '.codegeex', '.cc-switch', '.agents', '.Xauthority',
+    '.profile', '.pam_environment', '.viminfo', '.wget-hsts',
 }
-PRIVATE_PATTERNS = ('.claude*', '.hicc*', '.bash*', '.zsh*', '.shell*', '.env*')
+# Proxy clients installed in HOME commonly keep subscription URLs next to their binaries.
+PRIVATE_PATTERNS = ('.claude*', '.bash*', '.zsh*', '.shell*', '.env*', '.condarc*',
+                    'clash*', 'mihomo*')
 
 
 def research_mounts(home: Path) -> list[str]:
@@ -31,11 +31,15 @@ def research_mounts(home: Path) -> list[str]:
     return mounts
 
 
-def private_paths(home: Path, repository: Path) -> list[Path]:
-    """Mask resolved targets too, so a home symlink cannot reveal credentials."""
+def private_paths(home: Path, repository: Path, extra: tuple[str, ...] = ()) -> list[Path]:
+    """Mask resolved targets too, so a home symlink cannot reveal credentials.
+
+    ``extra`` holds the user's own HOME entry names or patterns from config.
+    """
     candidates = [home / name for name in PRIVATE_NAMES]
+    patterns = (*PRIVATE_PATTERNS, *extra)
     candidates.extend(p for p in home.iterdir()
-                      if any(fnmatch.fnmatch(p.name, pattern) for pattern in PRIVATE_PATTERNS))
+                      if any(fnmatch.fnmatch(p.name, pattern) for pattern in patterns))
     candidates.extend(home / name for name in ('.cargo/credentials', '.cargo/credentials.toml'))
     candidates.extend(repository.glob('config*.local.json'))
     candidates.append(repository / 'config.json')

@@ -16,6 +16,11 @@ from .wire import RouteError, proxy_json, server_health
 
 
 HINTS = {
+    "network_isolation_unavailable": (
+        "bubblewrap cannot create a private network namespace. Install bubblewrap; on Ubuntu "
+        "23.10+ AppArmor may block unprivileged user namespaces (see docs FAQ). Only Ubuntu "
+        "22.04 is verified."
+    ),
     "bootstrap_proxy_unavailable": "Start the configured local VPN/proxy and check its port.",
     "openbsd_netcat_required_for_ssh_http_proxy": "Install OpenBSD netcat for the SSH bootstrap.",
     "ssh_key_or_verified_known_hosts_missing": "Check the SSH key and verified known_hosts paths.",

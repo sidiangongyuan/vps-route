@@ -41,10 +41,10 @@ class AuthTests(unittest.TestCase):
     def test_unrelated_credentials_and_runtime_injection_not_inherited(self):
         with patch.dict(os.environ, {"AWS_SECRET_ACCESS_KEY": "fixture", "NODE_OPTIONS": "fixture",
                                      "SSH_CONNECTION": "fixture", "GITHUB_TOKEN": "fixture",
-                                     "HICC_TEST": "fixture", "TZ": "UTC"}):
+                                     "UNRELATED_TOOL_TOKEN": "fixture", "TZ": "UTC"}):
             result = clean_environment()
         for name in ("AWS_SECRET_ACCESS_KEY", "NODE_OPTIONS", "SSH_CONNECTION", "GITHUB_TOKEN",
-                     "HICC_TEST", "TZ"):
+                     "UNRELATED_TOOL_TOKEN", "TZ"):
             self.assertNotIn(name, result)
 
     def exercise_login(self, authorization_code: str) -> tuple[int, str]:

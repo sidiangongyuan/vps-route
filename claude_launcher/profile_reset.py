@@ -93,10 +93,8 @@ def profile_reset_inventory(config: Config) -> dict[str, object]:
             "vps_and_project_files_unchanged": True}
 
 
-def full_reset_inventory(config: Config, *, include_hicc: bool = True) -> dict[str, object]:
+def full_reset_inventory(config: Config) -> dict[str, object]:
     """Preview exact state paths, without reading credentials or session contents."""
-    from .legacy_cutover import legacy_inventory
-
     home = Path.home().resolve()
     active = config.profile_home
     # Unlike resolve-only validation, reject links in every managed ancestor.
@@ -111,13 +109,11 @@ def full_reset_inventory(config: Config, *, include_hicc: bool = True) -> dict[s
             raise RouteError("unsafe_profile_path")
     if (active.parent / ".archives").is_symlink():
         raise RouteError("unsafe_archive_path")
-    legacy = legacy_inventory(include_hicc=include_hicc)
     return {
         "profile": str(active),
         "profile_present": active.exists(),
         "profile_process_running": _profile_is_running(active),
-        "legacy_present": legacy["present"],
-        "legacy_process_running": legacy["legacy_process_running"],
+        "existing_claude_outside_tool_unchanged": True,
         "projects_and_shared_skills_preserved": True,
         "route_and_ssh_configuration_preserved": True,
         "backup_contains_old_credentials": True,
@@ -127,22 +123,11 @@ def full_reset_inventory(config: Config, *, include_hicc: bool = True) -> dict[s
 
 
 def reset_local_state(config: Config) -> dict[str, object]:
-    """Compose the existing archive operations; never destroy their backups.
-
-    Cross-directory moves are not a single transaction. If a later step fails,
-    preserve and report completed archives rather than pretending to roll back
-    newly created state or discarding the user's data.
-    """
-    from .legacy_cutover import archive_legacy_state
-
+    """Archive only the tool profile; ~/.claude and other host state are never touched."""
     inventory = full_reset_inventory(config)
-    if inventory["profile_process_running"] or inventory["legacy_process_running"]:
-        raise RouteError("claude_or_hicc_still_running; close_sessions_before_reset")
-    legacy = archive_legacy_state() if inventory["legacy_present"] else None
-    try:
-        profile = reset_profile(config)
-    except (RouteError, OSError) as exc:
-        raise RouteError(f"reset_incomplete; legacy_archive={legacy}; {exc}") from None
+    if inventory["profile_process_running"]:
+        raise RouteError("vps_route_session_still_running; close_it_before_reset")
+    profile = reset_profile(config)
 
     # Recreate only a neutral update preference, never restore old settings.
     settings = config.profile_home / ".claude/settings.json"
@@ -153,7 +138,6 @@ def reset_local_state(config: Config) -> dict[str, object]:
         stream.write("\n")
     return {
         "profile_archive": str(profile) if profile else None,
-        "legacy_archive": str(legacy) if legacy else None,
         "fresh_profile": str(config.profile_home),
         "login_performed": False,
         "projects_and_shared_skills_preserved": True,

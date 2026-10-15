@@ -17,6 +17,7 @@ from .wire import RouteError
 PRIVATE_FIELDS = {
     "ssh_host", "ssh_user", "identity_file", "known_hosts", "remote_socket",
     "ssh_http_proxy", "texlive_root", "profile", "probe_url", "connectivity_urls",
+    "private_home_entries",
 }
 
 

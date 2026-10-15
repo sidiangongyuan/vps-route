@@ -42,27 +42,32 @@ ssh -i ~/.ssh/id_ed25519_vps_route -p 22 xxx@xxx.xxx.xxx.xxx
 
 ## 2. 安装工具
 
-客户端和 VPS 的 `/usr/bin/python3` 都需为 3.10+。
+客户端和 VPS 的 `/usr/bin/python3` 都需为 3.10+。目前只在 Ubuntu 22.04 客户端上验证过。
 客户端 Ubuntu/Debian 可安装以下依赖：
 
 ```bash
 sudo apt-get install git gh python3 python3-venv pipx bubblewrap openssh-client \
   netcat-openbsd curl ca-certificates
-gh repo clone sidiangongyuan/vps-route
-cd vps-route
-pipx install .
+```
+
+仓库是私有的，需要有访问权限的 GitHub 账号。登录并让 git 使用这个登录，
+然后直接从 GitHub 安装：
+
+```bash
+gh auth login
+gh auth setup-git
+pipx install git+https://github.com/sidiangongyuan/vps-route.git
 pipx ensurepath
 ```
 
-仓库需要访问权限，尚未登录 GitHub 时先运行 `gh auth login`。
-安装后重新打开终端；没有 pipx 也可使用虚拟环境：
+安装后重新打开终端。没有 pipx 也可使用虚拟环境：
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install .
+python3 -m venv ~/.venvs/vps-route
+~/.venvs/vps-route/bin/pip install git+https://github.com/sidiangongyuan/vps-route.git
 ```
 
-虚拟环境用户将下面的 `vps-route` 替换为安装目录中的 `.venv/bin/vps-route`。
+虚拟环境用户将下面的 `vps-route` 替换为 `~/.venvs/vps-route/bin/vps-route`。
 
 ## 3. 填写连接信息
 
@@ -148,7 +153,9 @@ vps-route run
 | 情况 | 处理 |
 | --- | --- |
 | 找不到 `vps-route` | 执行 `pipx ensurepath` 后重新打开终端，或使用虚拟环境中的完整入口路径 |
-| `network_isolation_unavailable` | 检查 bubblewrap 与系统非特权网络命名空间支持；不要去掉隔离绕过 |
+| `network_isolation_unavailable` | 先确认已安装 bubblewrap。Ubuntu 23.10/24.04 默认用 AppArmor 限制非特权用户命名空间，可能导致这个错误；本工具未在这些版本上验证。可请管理员为 `/usr/bin/bwrap` 添加允许 `userns` 的 AppArmor 配置后重试（这会放宽系统策略）。不要尝试绕过隔离检查 |
+| 在 Claude 里 `git push`、SSH 或 `http://` 失败 | 会话里只能访问公网 HTTPS（443）。这类命令请在普通终端执行 |
+| `self-update` 失败 | 先确认 `gh auth status` 正常、会话都已关闭；仍失败就执行 `pipx install --force git+https://github.com/sidiangongyuan/vps-route.git` 重装 |
 | SSH 主机身份校验失败 | 向管理员核对主机指纹，不关闭身份校验 |
 | SSH 登录失败或超时 | 检查用户名、密钥、SSH 端口，以及配置的本机代理是否运行 |
 | 出口 IP 显示为空，但连通性正常 | IP 查询服务暂不可用，不影响使用；稍后重试 doctor |
@@ -156,9 +163,9 @@ vps-route run
 | 配置冲突 | 原配置已保留；核对导入文件，不用 init 强行覆盖 |
 | 登录 code 失败 | 使用最新登录终端对应的网址和完整 code，勿重复使用旧 code |
 | Claude 提示连接错误、正在重试 | 等待 Claude 自带重试；SSH 在后台自动重连。若重试耗尽，可用 `vps-route doctor --connect` 检查，恢复后手动重试请求 |
-| 旧会话仍显示工具的断开/恢复提示 | 退出后重新运行 `vps-route run`，新行为在新启动的会话中生效 |
 | 提示 SSH 验证失败、停止重连 | 核对密钥和 VPS 指纹，不要关闭指纹校验；修复后手动退出并重新启动 |
-| 使用中 Claude 仍退出 | 新行为仅在重新启动后生效；查看日志区分旧版本、手动停止或 Claude 自身退出 |
-| 退出后终端出现 `35;142;34M` 一类数字 | 新版强退会重置终端；旧 Orca 标签页可执行 `reset`，无效则新建标签页；不是 `vps-route reset` |
+| 使用中 Claude 退出 | 用 `vps-route logs --tail 50` 区分是手动停止、SSH 无法重连还是 Claude 自身退出 |
+| 退出后终端出现 `35;142;34M` 一类数字 | 执行系统命令 `reset`（不是 `vps-route reset`），无效则新开终端标签页 |
+| 反馈问题 | 附上 `vps-route doctor --connect --report ~/vps-route-report.json` 生成的文件和 `vps-route logs --tail 50`，分享前去掉出口 IP 等敏感信息 |
 
 其他操作见 [使用说明](USAGE.zh-CN.md)。
