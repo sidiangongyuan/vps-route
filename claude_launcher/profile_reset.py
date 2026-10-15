@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import sys
 import time
 from pathlib import Path
 
@@ -14,6 +15,10 @@ from .wire import RouteError
 
 def _profile_is_running(profile_home: Path) -> bool:
     """Refuse rotation while a same-user process was started from this profile."""
+    if sys.platform == "darwin":
+        from .macos import profile_is_running
+
+        return profile_is_running(profile_home)
     needle = os.fsencode(str(profile_home))
     proc = Path("/proc")
     try:

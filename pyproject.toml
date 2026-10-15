@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vps-route"
 dynamic = ["version"]
-description = "Linux Claude Code launcher with an isolated profile and an SSH-owned VPS route"
+description = "Claude Code launcher for Linux and macOS with an isolated profile and an SSH-owned VPS route"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "LicenseRef-Proprietary"
@@ -16,6 +16,7 @@ classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
   "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
   "Programming Language :: Python :: 3",
   "Topic :: System :: Networking",
 ]

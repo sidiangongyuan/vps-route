@@ -21,6 +21,23 @@ HINTS = {
         "23.10+ AppArmor may block unprivileged user namespaces (see docs FAQ). Only Ubuntu "
         "22.04 is verified."
     ),
+    "seatbelt_unavailable": "macOS sandbox-exec is missing; the tool does not run without it.",
+    "network_isolation_unverified": (
+        "The macOS sandbox self-check could not confirm that direct connections are blocked. "
+        "Run vps-route macos-check and send its output; do not try to bypass the check."
+    ),
+    "command_unsupported_on_macos": (
+        "Not available on macOS. Supported: init, setup-vps, doctor, install, auth login, "
+        "auth status, run, update, native-version, logs, config, server-version, "
+        "self-update, uninstall, macos-check."
+    ),
+    "texlive_root_unsupported_on_macos": (
+        "Remove it with: vps-route config set texlive_root null --apply"
+    ),
+    "isolated_login_credentials_not_in_profile": (
+        "Claude did not save this login inside the tool profile (Keychain access is blocked "
+        "by design). Run vps-route macos-check and report the output."
+    ),
     "bootstrap_proxy_unavailable": "Start the configured local VPN/proxy and check its port.",
     "openbsd_netcat_required_for_ssh_http_proxy": "Install OpenBSD netcat for the SSH bootstrap.",
     "ssh_key_or_verified_known_hosts_missing": "Check the SSH key and verified known_hosts paths.",

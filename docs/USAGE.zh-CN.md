@@ -1,7 +1,8 @@
 # VPS Route 使用说明
 
 在独立环境中使用官方 Claude Code，通过你自己的 VPS 联网；连接失败不回退直连。
-目前仅支持 Linux，且只在 Ubuntu 22.04 上验证过，其他发行版未经测试。
+支持 Linux，只在 Ubuntu 22.04 上验证过，其他发行版未经测试。
+macOS 为实验性支持，尚未在真实 Mac 上验证，见 [macOS 说明](MACOS.zh-CN.md)。
 不包含 Claude 账号、VPS 或浏览器，也没有发布到 PyPI。
 
 首次使用请看 [完整配置例子](FIRST_RUN.zh-CN.md)。
@@ -105,7 +106,7 @@ Claude 在本机运行，不是在 VPS 上运行。网络路径是：
 Claude → 独立网络中的代理 → 加密 SSH → VPS → 目标网站
 ```
 
-`/status` 中代理应为 `http://127.0.0.1:17878`；它只存在于独立环境，
+`/status` 中代理应为 `http://127.0.0.1:17878`（macOS 为随机端口）；它只供独立环境使用，
 不是整个系统的代理。最终出口用 `doctor --connect` 核对，不能只看代理端口。
 
 启动前检查通过 VPS 的 HTTPS 连通性：并行检测两个独立目标，任一连通即可。

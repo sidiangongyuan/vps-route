@@ -1,11 +1,11 @@
-"""Reject unsupported platforms before importing Linux-only runtime modules."""
+"""Reject unsupported platforms before importing platform-specific runtime modules."""
 
 import sys
 
 
 def main() -> int:
-    if sys.platform != "linux":
-        print("vps-route: Linux only; macOS support is not implemented", file=sys.stderr)
+    if sys.platform not in {"linux", "darwin"}:
+        print("vps-route: Linux and macOS only", file=sys.stderr)
         return 69
     from .cli import main as cli_main
 

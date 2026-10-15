@@ -9,6 +9,7 @@ import re
 import signal
 import stat
 import subprocess
+import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -73,6 +74,10 @@ def maintenance_in_use() -> bool:
 
 def process_identity(pid: int) -> str | None:
     """Start ticks uniquely identify a PID on this boot; never read its environment."""
+    if sys.platform == "darwin":
+        from .macos import process_identity as start_time
+
+        return start_time(pid)
     try:
         root = Path("/proc") / str(pid)
         if root.stat().st_uid != os.getuid():
@@ -142,7 +147,8 @@ def _read_record(path: Path) -> tuple[dict, bool]:
                 or not isinstance(value.get("start_ticks"), str)):
             raise ValueError
         alive = locked and process_identity(value["pid"]) == value["start_ticks"]
-        if alive:
+        # macOS has no /proc descriptors; it also never signals sessions (unsupported).
+        if alive and sys.platform != "darwin":
             # A copied/forged lease must not authorize signaling another process.
             info = os.fstat(fd)
             descriptors = Path("/proc") / str(value["pid"]) / "fd"

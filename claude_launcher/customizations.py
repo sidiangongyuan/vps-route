@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 from .wire import RouteError
@@ -28,7 +29,11 @@ def skills_arguments(arguments: list[str]) -> list[str]:
     for argument in arguments:
         if argument.split("=", 1)[0] in LOADING_FLAGS:
             raise RouteError("customization_override_requires_review")
-    return ["--setting-sources", "user,project,local", "--settings", json.dumps(SKILL_SETTINGS),
+    settings = dict(SKILL_SETTINGS)
+    if sys.platform == "darwin":
+        # The launcher's Seatbelt profile already applies; nesting it fails.
+        settings["sandbox"] = {"enabled": False}
+    return ["--setting-sources", "user,project,local", "--settings", json.dumps(settings),
             "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', *arguments]
 
 

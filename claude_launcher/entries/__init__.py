@@ -1,1 +1,1 @@
-"""Packaged child entry points run with the Linux system Python, not a host venv."""
+"""Packaged child entry points; Linux runs them with the system Python, not a host venv."""

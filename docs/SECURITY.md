@@ -43,6 +43,31 @@ they do not establish upstream or API recovery.
 While a connection is stalled or a check is pending, the isolated network still
 has no direct fallback.
 
+## macOS (experimental)
+
+On macOS, Claude runs under a Seatbelt profile (`sandbox-exec`) instead of a network
+namespace. All network access is denied except outbound TCP to one loopback port,
+where the launcher, outside the sandbox, relays to the SSH route. System DNS is
+denied too. Each launch first runs probes under the same profile and refuses to
+start unless public IPv4 TCP/UDP, other loopback ports, `/usr/bin/security` and
+`/usr/bin/open` are denied and the relay port is reachable. Apple Events are denied.
+
+HOME stays readable and writable except common credential locations (as with the
+Linux `research_filesystem` list, plus Keychains, browser/mail data,
+`~/Library/Containers`, `~/Library/Group Containers`, proxy-client data), other
+tool profiles, tool state, the configured SSH key and known_hosts, and
+`private_home_entries`. Masking is path-based: names and sizes stay visible, and it
+is not a defense against deliberately hostile code. Claude cannot use the Keychain,
+so its login stays in the profile; `auth login` fails if no profile credentials
+were written.
+
+Limits specific to macOS: the relay port can be used by other local processes
+during a session (it leads to your VPS); no `localhost` service or Unix socket is
+reachable from inside; system services that act on a process's behalf over IPC
+are outside the network boundary; Claude's own `/sandbox` is disabled; project
+`.claude` settings, commands and agents load normally (hooks and MCP stay off).
+Apple marks `sandbox-exec` as deprecated, but it still ships with macOS.
+
 ## What is not covered
 
 - Your browser, links opened outside the terminal, editor extensions and unrelated

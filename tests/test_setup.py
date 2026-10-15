@@ -258,7 +258,7 @@ class SetupTests(unittest.TestCase):
             self.assertEqual(deploy_server(config), 69)
 
     def test_unsupported_platform_fails_without_importing_runtime(self):
-        with patch("claude_launcher.entrypoint.sys.platform", "darwin"):
+        with patch("claude_launcher.entrypoint.sys.platform", "win32"):
             self.assertEqual(main(), 69)
 
 

@@ -36,6 +36,8 @@ PROXY_NAMES = {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_DIR = Path(__file__).resolve().parent
 ENTRY_DIR = PACKAGE_DIR / "entries"
+# The PTY helper runs outside the sandbox. macOS may lack /usr/bin/python3.
+PTY_PYTHON = [sys.executable, "-I"] if sys.platform == "darwin" else ["/usr/bin/python3"]
 # Tolerate brief transport stalls before declaring the SSH transport dead.
 SSH_KEEPALIVE_OPTIONS = (
     "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3",
@@ -436,7 +438,7 @@ def run_supervised(
     master, slave = pty.openpty()
     try:
         child = subprocess.Popen(
-            ["/usr/bin/python3", str(ENTRY_DIR / "pty_entry.py"), *args],
+            [*PTY_PYTHON, str(ENTRY_DIR / "pty_entry.py"), *args],
             stdin=slave, stdout=slave, stderr=slave, env=environment,
             start_new_session=True, close_fds=True,
         )

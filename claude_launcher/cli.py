@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -49,18 +50,38 @@ def namespace_available() -> bool:
         return False
 
 
+MACOS = sys.platform == "darwin"
+# Linux-only features; reported instead of attempted on macOS.
+MACOS_UNSUPPORTED = {"reset", "status", "sessions", "shell", "network-test"}
+
+
 def doctor(config: Config | None, connect: bool, report: Path | None = None) -> int:
     checks = {
         "ssh_installed": shutil.which("ssh") is not None,
-        "system_python_compatible": system_python_compatible(),
         "curl_installed": shutil.which("curl") is not None,
         "bash_installed": shutil.which("bash") is not None,
-        "private_network_namespace": namespace_available(),
+    }
+    if MACOS:
+        from .macos import check_failures, isolation_report
+
+        failures = check_failures(isolation_report(
+            config.private_home_entries if config else (),
+            (config.identity_file, config.known_hosts) if config else (),
+        ))
+        checks.update(platform="macos", seatbelt_network_isolation=not failures,
+                      seatbelt_check_failures=failures,
+                      home_access="open_with_credential_locations_masked")
+        isolation = ("seatbelt_network_isolation",)
+    else:
+        checks.update(system_python_compatible=system_python_compatible(),
+                      private_network_namespace=namespace_available())
+        isolation = ("private_network_namespace", "system_python_compatible")
+    checks.update({
         "config_loaded": config is not None,
         "live_account_files_read": False,
         "network_probe_executed": connect,
         "launcher_version": __version__,
-    }
+    })
     if config is not None:
         executable = config.claude_executable
         resolved = executable.resolve()
@@ -92,14 +113,13 @@ def doctor(config: Config | None, connect: bool, report: Path | None = None) -> 
             ),
             "isolated_timezone_source": "process_override" if config.timezone else "host_system_default",
             "isolated_timezone": config.timezone,
-            "research_filesystem_enabled": config.research_filesystem,
+            **({} if MACOS else {"research_filesystem_enabled": config.research_filesystem}),
             "runtime_connectivity_monitor_enabled": True,
             "exit_ip_pinning_enabled": False,
             "runtime_probe_interval_seconds": config.runtime_probe_interval_seconds,
             "runtime_probe_failures": config.runtime_probe_failures,
         })
-    ready = all(checks[name] for name in ("ssh_installed", "private_network_namespace",
-                                        "system_python_compatible", "curl_installed",
+    ready = all(checks[name] for name in ("ssh_installed", *isolation, "curl_installed",
                                         "bash_installed"))
     if connect:
         if config is None:
@@ -181,6 +201,21 @@ def launch(config: Config, workspace: Path, arguments: list[str], install: bool 
             print("vps-route: usage_log_write_failed", file=sys.stderr)
 
 
+def _isolated(config: Config, socket_path: Path, profile_home: Path, workspace: Path,
+              command: list[str], **options: object):
+    """Linux returns a ready namespace command; macOS also owns a loopback relay."""
+    if MACOS:
+        from .macos import seatbelt_session
+
+        return seatbelt_session(socket_path, profile_home, workspace, command,
+                                private_home_entries=config.private_home_entries,
+                                protected_files=(config.identity_file, config.known_hosts),
+                                timezone=config.timezone)
+    return contextlib.nullcontext(
+        sandbox_command(socket_path, profile_home, workspace, command, **options)
+    )
+
+
 def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditLog,
             install: bool = False, login: bool = False, safe_mode: bool = False,
             verify_after: bool = False, skills_mode: bool = False) -> int:
@@ -192,10 +227,18 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                   "Use vps-route update to upgrade.")
             audit.exit_code, audit.reason = 0, "already_installed"
             return 0
-    if not namespace_available():
-        raise RouteError("network_isolation_unavailable")
-    if not system_python_compatible():
-        raise RouteError("system_python_3_10_required")
+    if MACOS:
+        from .macos import seatbelt_present
+
+        if config.texlive_root is not None:
+            raise RouteError("texlive_root_unsupported_on_macos")
+        if not seatbelt_present():
+            raise RouteError("seatbelt_unavailable")
+    else:
+        if not namespace_available():
+            raise RouteError("network_isolation_unavailable")
+        if not system_python_compatible():
+            raise RouteError("system_python_3_10_required")
     profile_home = config.profile_home
     executable = config.claude_executable
     profile_base = Path.home() / ".local/share/claude-launcher/profiles"
@@ -227,13 +270,17 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                 print("Open the official login URL shown below on a browser using the VPS exit."
                       " Paste the one-time code back into this terminal when prompted.",
                       flush=True)
-            executable_args = (
-                ["/usr/bin/python3", str(ENTRY_DIR / "install_entry.py")]
-                if install else [str(executable), *(["--safe-mode"] if safe_mode else []),
-                                 *(skills_arguments(arguments) if skills_mode else arguments)]
-            )
-            command, environment = sandbox_command(
-                tunnel.socket_path, profile_home, workspace,
+            if not install:
+                executable_args = [str(executable), *(["--safe-mode"] if safe_mode else []),
+                                   *(skills_arguments(arguments) if skills_mode else arguments)]
+            elif MACOS:
+                from .macos import INSTALL_COMMAND
+
+                executable_args = INSTALL_COMMAND
+            else:
+                executable_args = ["/usr/bin/python3", str(ENTRY_DIR / "install_entry.py")]
+            with _isolated(
+                config, tunnel.socket_path, profile_home, workspace,
                 executable_args,
                 login=login, project_instructions=skills_mode,
                 texlive_root=config.texlive_root,
@@ -241,17 +288,21 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                 private_home_entries=config.private_home_entries,
                 timezone=config.timezone,
                 reconnectable=keep_session,
-            )
-            code, reason = run_supervised(
-                command, environment,
-                None if keep_session else RuntimeConnectivityMonitor(
-                    config, tunnel.socket_path, audit.connection_check,
-                ),
-                tunnel.close, tunnel.alive,
-                config.runtime_probe_interval_seconds,
-                reconnect=tunnel.reconnect if keep_session else None,
-                connection_event=audit.connection_state if keep_session else None,
-            )
+            ) as (command, environment):
+                code, reason = run_supervised(
+                    command, environment,
+                    None if keep_session else RuntimeConnectivityMonitor(
+                        config, tunnel.socket_path, audit.connection_check,
+                    ),
+                    tunnel.close, tunnel.alive,
+                    config.runtime_probe_interval_seconds,
+                    reconnect=tunnel.reconnect if keep_session else None,
+                    connection_event=audit.connection_state if keep_session else None,
+                )
+            if (login and code == 0 and MACOS
+                    and not (profile_home / ".claude/.credentials.json").is_file()):
+                # The Keychain tool is blocked; a login stored elsewhere is not isolated.
+                code, reason = 69, "isolated_login_credentials_not_in_profile"
             if login and code == 0:
                 complete_authenticated_onboarding(profile_home, executable)
             if code == 0 and verify_after:
@@ -267,18 +318,18 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                         if connectivity_check(config, verify_tunnel.socket_path, audit.connection_check):
                             code, reason = 69, "update_verification_route_failed"
                         else:
-                            verify_command, verify_environment = sandbox_command(
-                                verify_tunnel.socket_path, profile_home, workspace,
+                            with _isolated(
+                                config, verify_tunnel.socket_path, profile_home, workspace,
                                 [str(executable), "--version"],
                                 timezone=config.timezone,
-                            )
-                            verify_code, _ = run_supervised(
-                                verify_command, verify_environment,
-                                RuntimeConnectivityMonitor(config, verify_tunnel.socket_path,
-                                                           audit.connection_check),
-                                verify_tunnel.close, verify_tunnel.alive,
-                                config.runtime_probe_interval_seconds,
-                            )
+                            ) as (verify_command, verify_environment):
+                                verify_code, _ = run_supervised(
+                                    verify_command, verify_environment,
+                                    RuntimeConnectivityMonitor(config, verify_tunnel.socket_path,
+                                                               audit.connection_check),
+                                    verify_tunnel.close, verify_tunnel.alive,
+                                    config.runtime_probe_interval_seconds,
+                                )
                             if verify_code:
                                 code, reason = 69, "updated_binary_unusable"
                     except RouteError:
@@ -364,6 +415,8 @@ def main() -> int:
     inspect = subparsers.add_parser("doctor", help="offline checks; optional VPS route probe")
     inspect.add_argument("--connect", action="store_true")
     inspect.add_argument("--report", type=Path, help="write private sanitized JSON; no account contents")
+    subparsers.add_parser("macos-check",
+                          help="macOS: secret-free sandbox self-test report for troubleshooting")
     configuration = subparsers.add_parser("config", help="view, validate or explicitly edit route config")
     config_commands = configuration.add_subparsers(dest="config_action", required=True)
     show = config_commands.add_parser("show", help="redacted values by default")
@@ -418,6 +471,9 @@ def main() -> int:
     upgrade.add_argument("--workspace", type=Path)
     args = parser.parse_args()
     try:
+        if MACOS and (args.action in MACOS_UNSUPPORTED
+                      or (args.action == "auth" and args.operation == "reset")):
+            raise RouteError("command_unsupported_on_macos")
         if args.action == "init":
             path = args.config or default_config_path()
             config = initialize_config(path, args.from_file, keep_existing=args.keep_existing,
@@ -475,6 +531,14 @@ def main() -> int:
         config = Config.load(path) if args.config or path.exists() else None
         if args.action == "doctor":
             return doctor(config, args.connect, args.report)
+        if args.action == "macos-check":
+            if not MACOS:
+                raise RouteError("macos_check_runs_only_on_macos")
+            from .macos_check import report
+
+            result = report(config)
+            print(json.dumps(result, indent=2))
+            return 0 if result["ready"] else 69
         if config is None:
             raise RouteError("config_required; run_vps-route_init")
         if args.action == "install":

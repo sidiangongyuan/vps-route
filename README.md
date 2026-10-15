@@ -3,8 +3,9 @@
 Run official Claude Code in a separate local environment, with its HTTPS traffic
 routed through your own VPS over SSH. If the connection fails, there is no direct fallback.
 
-Linux only; verified on Ubuntu 22.04, other distributions are untested. Requires
-your own VPS and Claude account. Claude is downloaded during setup, not bundled
+Linux, verified on Ubuntu 22.04; other distributions are untested. macOS support
+is experimental and not yet verified on a real Mac ([macOS guide](docs/MACOS.zh-CN.md)).
+Requires your own VPS and Claude account. Claude is downloaded during setup, not bundled
 with the tool. Not affiliated with Anthropic.
 
 [中文使用说明](docs/USAGE.zh-CN.md) · [First-time setup example](docs/FIRST_RUN.zh-CN.md)
@@ -17,6 +18,9 @@ with the tool. Not affiliated with Anthropic.
 - Your VPS: Linux, `/usr/bin/python3` 3.10+, systemd, outbound HTTPS/DNS,
   SSH key login and Unix-socket forwarding. Non-root users need a working systemd user service.
 - An SSH private key and a verified VPS host fingerprint.
+- macOS (experimental): Homebrew `pipx` and `gh`; isolation uses the built-in
+  `sandbox-exec`. Run `vps-route macos-check` first. Some commands are Linux-only;
+  see the [macOS guide](docs/MACOS.zh-CN.md).
 
 On Ubuntu/Debian, install the client dependencies:
 

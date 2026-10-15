@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import tempfile
 from pathlib import Path
 
@@ -35,14 +36,20 @@ def complete_authenticated_onboarding(profile: Path, executable: Path) -> bool:
         return False
     # Do not race a running CLI that has cached the unfinished onboarding state.
     target = executable.resolve()
-    for process in Path("/proc").iterdir():
-        if not process.name.isdigit():
-            continue
-        try:
-            if process.stat().st_uid == os.getuid() and (process / "exe").resolve() == target:
-                raise RouteError("exit_running_claude_before_onboarding_repair")
-        except (FileNotFoundError, PermissionError):
-            continue
+    if sys.platform == "darwin":
+        from .macos import profile_is_running
+
+        if profile_is_running(profile):
+            raise RouteError("exit_running_claude_before_onboarding_repair")
+    else:
+        for process in Path("/proc").iterdir():
+            if not process.name.isdigit():
+                continue
+            try:
+                if process.stat().st_uid == os.getuid() and (process / "exe").resolve() == target:
+                    raise RouteError("exit_running_claude_before_onboarding_repair")
+            except (FileNotFoundError, PermissionError):
+                continue
     config["hasCompletedOnboarding"] = True
     if re.fullmatch(r"\d+\.\d+\.\d+", target.name):
         config["lastOnboardingVersion"] = target.name
