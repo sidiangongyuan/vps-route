@@ -27,6 +27,7 @@ from .runner import (
     sandbox_command, ssh_arguments,
 )
 from .wire import RouteError
+from .token_auth import apply_token, import_token, load_token, remove_token
 
 
 def namespace_available() -> bool:
@@ -256,6 +257,8 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
         raise RouteError("claude_executable_must_stay_inside_separate_profile")
     if profile_home.resolve() == Path.home().resolve():
         raise RouteError("profile_must_not_be_live_home")
+    if login and load_token(profile_home) is not None:
+        raise RouteError("imported_token_present; run_vps-route_auth_remove-token_before_login")
     code, reason = 69, "route_not_started"
     keep_session = audit.operation == "run" and not install and not verify_after and not login
     with tempfile.TemporaryDirectory(prefix="claude-route-") as directory:
@@ -293,6 +296,7 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                 timezone=config.timezone,
                 reconnectable=keep_session,
             ) as (command, environment):
+                apply_token(environment, profile_home, arguments, install=install, login=login)
                 code, reason = run_supervised(
                     command, environment,
                     None if keep_session else RuntimeConnectivityMonitor(
@@ -450,7 +454,7 @@ def main() -> int:
                        help="prompt in the terminal for the VPS password; keep restricted keys unchanged")
     subparsers.add_parser("network-test", help="isolated HTTPS connectivity and direct-route blocking test")
     auth = subparsers.add_parser("auth", help="authentication in the separate profile only")
-    auth.add_argument("operation", choices=["login", "status", "reset"])
+    auth.add_argument("operation", choices=["login", "status", "reset", "import-token", "remove-token"])
     auth.add_argument("--text", action="store_true", help="forward --text for auth status")
     auth.add_argument("--apply", action="store_true", help="auth reset only: archive after confirmation")
     auth.add_argument("--dry-run", action="store_true", help="auth reset only: preview without changes")
@@ -639,6 +643,16 @@ def main() -> int:
                 raise RouteError("reset_options_only_valid_for_auth_reset")
             if args.text and args.operation != "status":
                 raise RouteError("auth_text_only_valid_for_status")
+            if args.operation in {"import-token", "remove-token"}:
+                with maintenance_barrier(exclusive=True):
+                    if args.operation == "import-token":
+                        import_token(config.profile_home)
+                        print("Token saved; validity not checked. Next: vps-route run")
+                    else:
+                        removed = remove_token(config.profile_home)
+                        print("Token removed locally; not revoked at Anthropic." if removed
+                              else "No imported token in this profile.")
+                return 0
             # Login cannot read project-level hooks or MCP settings.
             if not config.claude_executable.is_file():
                 raise RouteError("install_official_claude_in_separate_profile_first")

@@ -377,7 +377,7 @@ class MacCliTests(unittest.TestCase):
                     patch("claude_launcher.cli.SSHTunnel"), \
                     patch("claude_launcher.cli.connectivity_check", return_value=None), \
                     patch("claude_launcher.cli.run_supervised",
-                          return_value=(0, "child_exited")), \
+                          return_value=(0, "child_exited")) as supervised, \
                     patch("claude_launcher.cli.receipt"), \
                     patch("claude_launcher.install.installation_present", return_value=False), \
                     contextlib.redirect_stdout(io.StringIO()):
@@ -397,6 +397,18 @@ class MacCliTests(unittest.TestCase):
                 credentials.parent.mkdir()
                 credentials.write_text("{}")
                 self.assertEqual(cli.launch(config, workspace, ["auth", "login"], login=True), 0)
+                from claude_launcher.token_auth import save_token, remove_token
+                token = "sk-ant-oat01-" + "synthetic_" * 8
+                save_token(config.profile_home, token)
+                self.assertEqual(cli.launch(config, workspace, [], safe_mode=True), 0)
+                self.assertEqual(supervised.call_args.args[1]["CLAUDE_CODE_OAUTH_TOKEN"], token)
+                self.assertNotIn(token, repr(supervised.call_args.args[0]))
+                with self.assertRaisesRegex(RouteError, "imported_token_present"):
+                    cli.launch(config, workspace, ["auth", "login"], login=True)
+                remove_token(config.profile_home)
+                self.assertEqual(cli.launch(config, workspace, ["auth", "login"], login=True), 0)
+                self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", supervised.call_args.args[1])
+
 
     def test_texlive_is_refused_on_macos(self):
         config = Config("203.0.113.1", "fixture", 22, Path("k"), Path("h"), "/unused",

@@ -165,3 +165,29 @@ vps-route uninstall
 先预览再确认。默认永久删除本机工具资料、登录、历史、历史备份、日志和配置，
 并移除支持自动卸载的安装包。不删除 VPS 服务、SSH 密钥或项目。
 保留 Claude 资料可加 `--keep-profiles --keep-backups`；`-y` 只跳过确认。
+
+## 使用已有的长期 OAuth token
+
+如果已有 `claude setup-token` 生成的长期 token，在自己的终端执行：
+
+```bash
+vps-route auth import-token
+vps-route auth status --text
+vps-route run
+```
+
+在隐藏输入提示处粘贴 token 并回车。不要将 token 放进命令参数或聊天。
+导入仅检查格式，不验证服务端有效性；`auth status` 也不能代替真实模型请求。
+每次启动会从独立 profile 的 `.launcher-auth/oauth-token` 读取凭据，
+仅向隔离的 Claude 进程注入 `CLAUDE_CODE_OAUTH_TOKEN`。宿主认证变量仍被过滤，
+网络和文件隔离规则不变。导入和移除前须退出正在运行的 vps-route 会话。
+
+该文件保存明文 token，目录权限 0700、文件权限 0600。Claude 及子进程能读取它；
+profile 备份也包含凭据。不要分享 profile。导入 token 后如需改用原有浏览器登录：
+
+```bash
+vps-route auth remove-token
+vps-route auth login
+```
+
+移除只删除本地 token，不在服务端撤销它，也不删除原有浏览器登录凭据。
