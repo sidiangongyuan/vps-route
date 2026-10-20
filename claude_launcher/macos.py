@@ -1,4 +1,4 @@
-"""macOS isolation with Seatbelt (sandbox-exec): no direct network, credentials masked.
+"""macOS isolation with Seatbelt: explicit file roots and no host IPC or direct network.
 
 Claude runs under a profile that allows outbound connections only to one loopback
 port. A relay in the launcher process, outside the sandbox, forwards that port to
@@ -15,6 +15,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from typing import Iterator
@@ -25,6 +26,12 @@ from .wire import RouteError
 
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+# Read-only toolchains and OS resources. No HOME, shared temp, or general /Library.
+RUNTIME_ROOTS = (
+    "/System", "/usr", "/bin", "/sbin", "/private/etc", "/opt/homebrew",
+    "/private/var/db/timezone",  # Bun/ICU follows /etc/localtime here.
+    "/Library/Apple", "/Library/Developer", "/Library/Frameworks", "/Applications/Xcode.app",
+)
 # The Keychain tool would share logins with the user's normal Claude; `open`
 # hands URLs to a browser on the host network.
 BLOCKED_EXECUTABLES = ("/usr/bin/security", "/usr/bin/open")
@@ -55,8 +62,9 @@ INSTALL_COMMAND = ["/bin/bash", "-c", INSTALL_SCRIPT]
 
 # Runs inside the profile under test; standard library only, Python 3.9 compatible.
 SELF_CHECK = r"""
-import errno, json, os, socket, subprocess, sys
+import ctypes, errno, json, os, socket, subprocess, sys
 proxy, decoy, home = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+host_file, host_pid = sys.argv[4], int(sys.argv[5])
 def attempt(family, kind, address):
     try:
         s = socket.socket(family, kind)
@@ -96,15 +104,50 @@ def listing(path):
         return "absent"
     except OSError:
         return "error"
+def host_access(write):
+    try:
+        with open(host_file, "a" if write else "r") as stream:
+            if write: stream.write("probe")
+            else: stream.read(1)
+        return "allowed"
+    except PermissionError:
+        return "blocked"
+    except OSError:
+        return "error"
+def signal_host():
+    try:
+        os.kill(host_pid, 0)
+        return "allowed"
+    except PermissionError:
+        return "blocked"
+    except OSError:
+        return "error"
+def mach_lookup(name):
+    if sys.platform != "darwin":
+        return "unavailable"
+    lib = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+    bootstrap = ctypes.c_uint.in_dll(lib, "bootstrap_port")
+    port = ctypes.c_uint()
+    result = lib.bootstrap_look_up(bootstrap, name.encode(), ctypes.byref(port))
+    if port.value:
+        lib.mach_port_deallocate(lib.mach_task_self(), port)
+    return "blocked" if result == 1100 else str(result)
 print(json.dumps({
     "tcp4_public": attempt(socket.AF_INET, socket.SOCK_STREAM, ("203.0.113.1", 443)),
     "tcp6_public": attempt(socket.AF_INET6, socket.SOCK_STREAM, ("2001:db8::1", 443)),
     "udp4_public": attempt(socket.AF_INET, socket.SOCK_DGRAM, ("203.0.113.1", 53)),
     "loopback_other_port": attempt(socket.AF_INET, socket.SOCK_STREAM, ("127.0.0.1", decoy)),
     "loopback_proxy_port": attempt(socket.AF_INET, socket.SOCK_STREAM, ("127.0.0.1", proxy)),
+    "udp_proxy_port": attempt(socket.AF_INET, socket.SOCK_DGRAM, ("127.0.0.1", proxy)),
     "keychain_tool": execute("/usr/bin/security"),
     "open_tool": execute("/usr/bin/open"),
     "ssh_directory": listing(os.path.join(home, ".ssh")),
+    "host_file_read": host_access(False),
+    "host_file_write": host_access(True),
+    "host_signal": signal_host(),
+    "launchservices": mach_lookup("com.apple.coreservices.launchservicesd"),
+    "securityd": mach_lookup("com.apple.securityd.xpc"),
+    "trustd": mach_lookup("com.apple.trustd.agent"),
 }))
 """
 # Errors that mean no packet left the host are acceptable where IPv6 is absent.
@@ -114,9 +157,16 @@ REQUIRED = {
     "udp4_public": {"blocked"},
     "loopback_other_port": {"blocked"},
     "loopback_proxy_port": {"connected"},
+    "udp_proxy_port": {"blocked"},
     "keychain_tool": {"blocked"},
     "open_tool": {"blocked"},
     "ssh_directory": {"blocked", "absent"},
+    "host_file_read": {"blocked"},
+    "host_file_write": {"blocked"},
+    "host_signal": {"blocked"},
+    "launchservices": {"blocked"},
+    "securityd": {"blocked"},
+    "trustd": {"blocked"},
 }
 
 
@@ -134,7 +184,7 @@ def private_paths(home: Path, extra: tuple[str, ...] = (),
                   protected_files: tuple[Path, ...] = ()) -> list[Path]:
     """Credential locations to deny, as given and resolved; Seatbelt matches real paths.
 
-    HOME stays open otherwise, including ~/.local apart from this tool's own data.
+    These denies also apply if a credential sits inside an allowed project root.
     """
     candidates = [home / name for name in PRIVATE_NAMES if name != ".local"]
     candidates += [home / ".local/share/claude-launcher", home / ".local/state/claude-launcher",
@@ -160,24 +210,66 @@ def private_paths(home: Path, extra: tuple[str, ...] = (),
     return sorted(result)
 
 
-def seatbelt_profile(proxy_port: int, profile_home: Path, private: list[Path]) -> str:
-    """Later SBPL rules take precedence over earlier ones for the same operation."""
+def seatbelt_profile(proxy_port: int, profile_home: Path, private: list[Path], *,
+                     workspace: Path | None = None, temporary: Path | None = None) -> str:
+    """Default-deny policy: no host IPC, no host signals, and explicit file roots.
+
+    Mach services (including trustd, securityd and Launch Services) remain denied.
+    Do not add a service exception to fix a client that cannot work in this policy.
+    """
+    profile_home = profile_home.resolve()
+    writable = {profile_home}
+    writable.update(path.resolve() for path in (workspace, temporary) if path is not None)
+    runtimes = {Path(path).resolve() for path in RUNTIME_ROOTS}
+    package = Path(__file__).resolve().parent
     lines = [
         "(version 1)",
-        "(allow default)",
-        # TCP, UDP, Unix sockets and mDNSResponder DNS; nothing leaves directly.
-        "(deny network*)",
-        # Local listeners (login callback, dev servers) may accept loopback clients.
-        '(allow network-bind network-inbound (local ip "localhost:*"))',
-        # The sole way out: the launcher's relay into the verified SSH route.
-        f'(allow network-outbound (remote ip "localhost:{int(proxy_port)}"))',
+        "(deny default)",
+        "(allow process-exec process-fork)",
+        "(allow signal process-info* mach-priv-task-port (target same-sandbox))",
+        "(allow sysctl-read)",
+        # V8/Bun thread configuration; not a general sysctl-write grant.
+        '(allow sysctl-write (sysctl-name "kern.tcsm_enable"))',
+        "(allow file-read-metadata)",
+        # dyld needs the root directory itself, not its contents recursively.
+        '(allow file-read* (literal "/") (literal "/dev"))',
+        "(allow file-read* " + " ".join(
+            f"(subpath {_quote(str(path))})" for path in sorted(runtimes)) + ")",
+        "(allow file-read* file-write* " + " ".join(
+            f"(subpath {_quote(str(path))})" for path in sorted(writable)) + ")",
+        '(allow file-read* (literal "/dev/null") (literal "/dev/zero") '
+        '(literal "/dev/random") (literal "/dev/urandom"))',
+        '(allow file-write* (literal "/dev/null"))',
+        '(allow file-read* file-write* file-ioctl (literal "/dev/tty"))',
+        '(allow file-ioctl (regex #"^/dev/ttys[0-9]+$"))',
+        # Opening a new PTY must not grant access to other sessions' slave TTYs.
+        '(allow pseudo-tty)',
+        '(allow file-read* file-write* file-ioctl (literal "/dev/ptmx"))',
+        '(allow file-read* file-write* (require-all (regex #"^/dev/ttys[0-9]+$") '
+        '(extension "com.apple.sandbox.pty")))',
+        # TCP only: an unrelated UDP service may use the same port number.
+        # No binding/listening, even on loopback. No Unix-domain sockets.
+        f'(allow network-outbound (remote tcp "localhost:{int(proxy_port)}"))',
     ]
-    if private:
-        # Metadata stays readable so path resolution through denied parents works.
-        lines.append("(deny file-read-data file-read-xattr file-write*")
-        lines.extend(f"    (subpath {_quote(str(path))})" for path in private)
-        lines.append(")")
-    lines.append(f"(allow file-read* file-write* (subpath {_quote(str(profile_home))}))")
+    for path in private:
+        # The profile is the only exception inside protected tool storage.
+        match = f"(subpath {_quote(str(path))})"
+        if profile_home.is_relative_to(path) and path != profile_home:
+            match = (f"(require-all {match} "
+                     f"(require-not (subpath {_quote(str(profile_home))})))")
+        lines.append(f"(deny file-read-data file-read-xattr file-write* {match})")
+    # A writable workspace must not make the launcher or toolchains writable.
+    immutable = {*runtimes, package}
+    for path in sorted(immutable):
+        lines.append(f"(deny file-write* (subpath {_quote(str(path))}))")
+    # Pin protected paths and their ancestors: renaming a writable parent must
+    # not move protected contents to a name outside the deny rule.
+    pins = set()
+    for path in (*private, *immutable, *writable):
+        pins.update((path, *path.parents))
+    for path in sorted(pins):
+        if any(path.is_relative_to(root) for root in writable):
+            lines.append(f"(deny file-write-unlink (literal {_quote(str(path))}))")
     lines.append("(deny process-exec "
                  + " ".join(f"(literal {_quote(path)})" for path in BLOCKED_EXECUTABLES) + ")")
     # Apple Events would let another app act on the host network.
@@ -188,13 +280,17 @@ def seatbelt_profile(proxy_port: int, profile_home: Path, private: list[Path]) -
 def run_self_check(profile: str, proxy_port: int, home: Path) -> dict:
     """Run the probes under ``profile``; values are short outcome names only."""
     python = os.path.realpath(sys.executable)
-    with socket.socket() as decoy:
+    with tempfile.TemporaryDirectory(prefix="vps-route-host-probe-") as directory, \
+            socket.socket() as decoy:
+        host_file = Path(directory) / "inert-data"
+        host_file.write_text("sandbox test data")
         decoy.bind(("127.0.0.1", 0))
         decoy.listen(1)
         try:
             result = subprocess.run(
                 [SANDBOX_EXEC, "-p", profile, python, "-I", "-S", "-c", SELF_CHECK,
-                 str(proxy_port), str(decoy.getsockname()[1]), str(home)],
+                 str(proxy_port), str(decoy.getsockname()[1]), str(home),
+                 str(host_file.resolve()), str(os.getpid())],
                 stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
                 timeout=60,
                 cwd="/", env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL": "C"},
@@ -239,7 +335,8 @@ def _validated_paths(profile_home: Path, workspace: Path, private_home_entries: 
     return profile_home, workspace, private
 
 
-def child_environment(profile_home: Path, proxy_port: int, timezone: str | None) -> dict[str, str]:
+def child_environment(profile_home: Path, proxy_port: int, timezone: str | None,
+                      temporary: Path | None = None) -> dict[str, str]:
     from .runner import clean_environment
 
     environment = clean_environment()
@@ -248,8 +345,11 @@ def child_environment(profile_home: Path, proxy_port: int, timezone: str | None)
     environment["XDG_CONFIG_HOME"] = str(profile_home / ".config")
     environment["XDG_CACHE_HOME"] = str(profile_home / ".cache")
     environment["XDG_DATA_HOME"] = str(profile_home / ".local/share")
-    if os.environ.get("TMPDIR", "").startswith("/"):
-        environment["TMPDIR"] = os.environ["TMPDIR"]  # per-user, unlike the shared /tmp
+    # Use a file trust store. Do not reopen trustd/Keychain IPC for TLS clients.
+    environment["SSL_CERT_FILE"] = "/etc/ssl/cert.pem"
+    environment["CURL_CA_BUNDLE"] = "/etc/ssl/cert.pem"
+    if temporary is not None:
+        environment["TMPDIR"] = str(temporary) + "/"
     if timezone is not None:
         environment["TZ"] = timezone
     proxy = f"http://127.0.0.1:{int(proxy_port)}"
@@ -258,7 +358,7 @@ def child_environment(profile_home: Path, proxy_port: int, timezone: str | None)
     environment["NO_PROXY"] = environment["no_proxy"] = "localhost,127.0.0.1,::1"
     own = str(profile_home / ".local/bin")
     inherited = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin").split(":")
-    # Homebrew and user tools remain usable; Claude's own entry comes first.
+    # Tools still require read access under the policy's runtime/project roots.
     environment["PATH"] = ":".join(
         [own, *(entry for entry in inherited if entry.startswith("/") and entry != own)]
     )
@@ -277,17 +377,20 @@ def seatbelt_session(
     )
     if not seatbelt_present():
         raise RouteError("seatbelt_unavailable")
-    with ShimServer(("127.0.0.1", 0), ShimHandler) as server:
+    with tempfile.TemporaryDirectory(prefix="vps-route-sandbox-") as directory, \
+            ShimServer(("127.0.0.1", 0), ShimHandler) as server:
         server.upstream_path = str(socket_path)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             port = server.server_address[1]
-            profile = seatbelt_profile(port, profile_home, private)
+            temporary = Path(directory).resolve()
+            profile = seatbelt_profile(port, profile_home, private,
+                                       workspace=workspace, temporary=temporary)
             if check_failures(run_self_check(profile, port, Path.home().resolve())):
                 raise RouteError("network_isolation_unverified")
             args = ["/bin/sh", "-c", 'cd -- "$1" && shift && exec "$@"', "vps-route",
                     str(workspace), SANDBOX_EXEC, "-p", profile, *command]
-            yield args, child_environment(profile_home, port, timezone)
+            yield args, child_environment(profile_home, port, timezone, temporary)
         finally:
             server.shutdown()
 

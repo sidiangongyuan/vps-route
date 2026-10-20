@@ -2,7 +2,7 @@
 
 在独立环境中使用官方 Claude Code，通过你自己的 VPS 联网；连接失败不回退直连。
 支持 Linux，只在 Ubuntu 22.04 上验证过，其他发行版未经测试。
-macOS 为实验性支持，尚未在真实 Mac 上验证，见 [macOS 说明](MACOS.zh-CN.md)。
+macOS 为实验性支持，原生隔离已做本地测试，真实账号和 VPS 端到端流程仍待验证，见 [macOS 说明](MACOS.zh-CN.md)。
 不包含 Claude 账号、VPS 或浏览器，也没有发布到 PyPI。
 
 首次使用请看 [完整配置例子](FIRST_RUN.zh-CN.md)。

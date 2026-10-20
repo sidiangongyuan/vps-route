@@ -45,28 +45,48 @@ has no direct fallback.
 
 ## macOS (experimental)
 
-On macOS, Claude runs under a Seatbelt profile (`sandbox-exec`) instead of a network
-namespace. All network access is denied except outbound TCP to one loopback port,
-where the launcher, outside the sandbox, relays to the SSH route. System DNS is
-denied too. Each launch first runs probes under the same profile and refuses to
-start unless public IPv4 TCP/UDP, other loopback ports, `/usr/bin/security` and
-`/usr/bin/open` are denied and the relay port is reachable. Apple Events are denied.
+On macOS, Claude runs under a default-deny Seatbelt profile (`sandbox-exec`).
+The profile permits outbound TCP only to the launcher's loopback relay. The relay
+forwards bytes to the SSH-owned Unix socket. There is no direct fallback. UDP,
+Unix sockets, local binding and inbound connections are denied. SSH reconnects
+replace the upstream socket without changing the relay port or child policy.
 
-HOME stays readable and writable except common credential locations (as with the
-Linux `research_filesystem` list, plus Keychains, browser/mail data,
-`~/Library/Containers`, `~/Library/Group Containers`, proxy-client data), other
-tool profiles, tool state, the configured SSH key and known_hosts, and
-`private_home_entries`. Masking is path-based: names and sizes stay visible, and it
-is not a defense against deliberately hostile code. Claude cannot use the Keychain,
-so its login stays in the profile; `auth login` fails if no profile credentials
-were written.
+Mach service lookup is denied, including Launch Services, securityd and trustd.
+Apple Events, task access and signals to processes outside the sandbox are denied.
+Blocking the `open` and `security` executable paths is an additional restriction;
+it is not the IPC boundary. TLS clients must use file-based certificate stores.
+The child receives `/etc/ssl/cert.pem` through `SSL_CERT_FILE` and `CURL_CA_BUNDLE`.
+Clients that require host Keychain or trustd access can fail; do not add a Mach
+service exception to make them work.
 
-Limits specific to macOS: the relay port can be used by other local processes
-during a session (it leads to your VPS); no `localhost` service or Unix socket is
-reachable from inside; system services that act on a process's behalf over IPC
-are outside the network boundary; Claude's own `/sandbox` is disabled; project
-`.claude` settings, commands and agents load normally (hooks and MCP stay off).
-Apple marks `sandbox-exec` as deprecated, but it still ships with macOS.
+The selected project, private profile and a fresh per-session temporary directory
+are readable and writable. System toolchains, OS files and the timezone database
+are readable. Other host file contents are denied; file metadata remains visible.
+The policy also denies configured credential paths inside allowed roots, protects
+the launcher and toolchains from writes, and prevents moving protected ancestors
+to bypass path rules. `research_filesystem=true` is rejected on macOS.
+
+Each launch checks the actual profile before running Claude. The checks require
+network denials, access to the relay, denials of host-file access and host signals,
+and permission denials from the three Mach services above. A failed check stops
+the launch. Native tests also cover child inheritance, path aliases, protected
+ancestor moves, TCP versus UDP, TLS through a local test proxy, and PTY operation.
+These are regression checks, not a proof against every macOS escape.
+
+The relay port remains reachable by other local processes. The host user, launcher,
+SSH client, terminal and kernel are trusted. Project files and profile files are
+shared with the host. A host watcher, IDE, sync client or later host command can
+consume files written in those directories and act outside the sandbox. Existing
+hard links and already-open resources are another reason this is not a VM boundary.
+Do not run a host-side agent or automatic executor on an untrusted shared project.
+For an adversarial workload that must have no indirect host-network path, use a
+separate VM with controlled egress and no shared writable directories or host IPC.
+The Linux backend also excludes host-side delegated work and hostile-code safety.
+
+Claude's own `/sandbox` is disabled. Project `.claude` settings, commands and agents
+load normally; hooks and MCP stay off. Login must produce credentials in the private
+profile; the full real-account login flow still needs validation. Apple marks
+`sandbox-exec` as deprecated. Test the boundary on each supported macOS release.
 
 ## What is not covered
 

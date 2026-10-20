@@ -23,7 +23,9 @@ from claude_launcher.wire import RouteError
 GOOD = {"sandbox_started": True, "tcp4_public": "blocked", "tcp6_public": "blocked",
         "udp4_public": "blocked", "loopback_other_port": "blocked",
         "loopback_proxy_port": "connected", "keychain_tool": "blocked",
-        "open_tool": "blocked", "ssh_directory": "blocked"}
+        "open_tool": "blocked", "ssh_directory": "blocked", "udp_proxy_port": "blocked",
+        "host_file_read": "blocked", "host_file_write": "blocked", "host_signal": "blocked",
+        "launchservices": "blocked", "securityd": "blocked", "trustd": "blocked"}
 
 
 def balanced(profile: str) -> bool:
@@ -55,14 +57,16 @@ class SeatbeltProfileTests(unittest.TestCase):
         )
         self.assertTrue(balanced(profile))
         lines = profile.splitlines()
-        self.assertEqual(lines[:3], ["(version 1)", "(allow default)", "(deny network*)"])
+        self.assertEqual(lines[:2], ["(version 1)", "(deny default)"])
         outbound = [line for line in lines if "network-outbound" in line]
-        self.assertEqual(outbound, ['(allow network-outbound (remote ip "localhost:43210"))'])
+        self.assertEqual(outbound, ['(allow network-outbound (remote tcp "localhost:43210"))'])
         self.assertIn('(subpath "/Users/a/we\\"ird\\\\name")', profile)
         deny = profile.index("(deny file-read-data file-read-xattr file-write*")
         allow = profile.index('(allow file-read* file-write* (subpath '
                               '"/Users/a/.local/share/claude-launcher/profiles/default"))')
-        self.assertLess(deny, allow)  # Later rules win in SBPL.
+        self.assertLess(allow, deny)  # Deny credentials even inside an allowed root.
+        self.assertIn('(require-not (subpath '
+                      '"/Users/a/.local/share/claude-launcher/profiles/default"))', profile)
         self.assertIn('(deny process-exec (literal "/usr/bin/security") '
                       '(literal "/usr/bin/open"))', profile)
         self.assertIn("(deny appleevent-send)", profile)
@@ -110,6 +114,9 @@ class SeatbeltProfileTests(unittest.TestCase):
                                 ("udp4_public", "sent", False),
                                 ("loopback_other_port", "connected", False),
                                 ("loopback_proxy_port", "blocked", False),
+                                ("host_file_write", "allowed", False),
+                                ("launchservices", "0", False),
+                                ("trustd", "1102", False),
                                 ("keychain_tool", "executed", False),
                                 ("ssh_directory", "absent", True),
                                 ("ssh_directory", "readable", False)]:
@@ -117,13 +124,17 @@ class SeatbeltProfileTests(unittest.TestCase):
                 self.assertEqual(macos.check_failures({**GOOD, name: value}) == [], ok)
 
     def test_self_check_script_runs_and_reports_every_probe(self):
-        with socket.socket() as proxy, socket.socket() as decoy:
+        with tempfile.TemporaryDirectory() as directory, \
+                socket.socket() as proxy, socket.socket() as decoy:
+            probe = Path(directory) / "host-probe"
+            probe.write_text("test data")
             for listener in (proxy, decoy):
                 listener.bind(("127.0.0.1", 0))
                 listener.listen(1)
             result = subprocess.run(
                 [sys.executable, "-I", "-S", "-c", macos.SELF_CHECK,
-                 str(proxy.getsockname()[1]), str(decoy.getsockname()[1]), "/nonexistent"],
+                 str(proxy.getsockname()[1]), str(decoy.getsockname()[1]), "/nonexistent",
+                 str(probe), str(os.getpid())],
                 capture_output=True, text=True, timeout=60, check=True,
             )
         observed = json.loads(result.stdout)
@@ -181,7 +192,8 @@ class SeatbeltSessionTests(unittest.TestCase):
             self.assertEqual(env["HOME"], str(self.profile))
             self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(self.profile / ".claude"))
             self.assertEqual(env["TZ"], "UTC")
-            self.assertEqual(env["TMPDIR"], "/var/tmp/x/")
+            self.assertNotEqual(env["TMPDIR"], "/var/tmp/x/")
+            self.assertTrue(Path(env["TMPDIR"]).is_dir())
             self.assertEqual(env["PATH"], f"{self.profile}/.local/bin:/opt/homebrew/bin:/usr/bin")
             self.assertNotIn("ANTHROPIC_API_KEY", env)
             self.assertEqual(args[:6], ["/bin/sh", "-c", 'cd -- "$1" && shift && exec "$@"',
@@ -191,13 +203,14 @@ class SeatbeltSessionTests(unittest.TestCase):
             self.assertEqual(args[8:], ["/claude", "--flag"])
             profile = args[7]
             self.assertEqual(check.call_args.args[:2], (profile, port))
-            self.assertIn(f'(remote ip "localhost:{port}")', profile)
+            self.assertIn(f'(remote tcp "localhost:{port}")', profile)
             self.assertIn(f'(subpath "{self.home}/.ssh")', profile)
             with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
                 client.sendall(b"connect")
                 self.assertEqual(client.recv(64), b"CONNECT")
         with self.assertRaises(OSError):
             socket.create_connection(("127.0.0.1", port), timeout=1).close()
+        self.assertFalse(Path(env["TMPDIR"]).exists())
 
     def test_command_runs_in_workspace_through_pty_helper_with_stand_in_sandbox(self):
         # A stand-in for sandbox-exec drops "-p PROFILE"; the rest of the chain is real.
@@ -205,15 +218,18 @@ class SeatbeltSessionTests(unittest.TestCase):
         stand_in.write_text('#!/bin/sh\nshift 2\nexec "$@"\n')
         stand_in.chmod(0o700)
         script = 'pwd; echo "$HTTPS_PROXY"; tty >/dev/null && : </dev/tty && exit 7'
+        input_fd, writer = os.pipe()  # Keep input open; do not echo EOF into the PTY.
+        self.addCleanup(os.close, input_fd)
+        self.addCleanup(os.close, writer)
         with patch("claude_launcher.macos.SANDBOX_EXEC", str(stand_in)), \
                 patch("claude_launcher.runner.PTY_PYTHON", [sys.executable, "-I"]), \
                 patch("claude_launcher.macos.run_self_check", return_value=GOOD), \
                 macos.seatbelt_session(self.root / "x.sock", self.profile,
                                        self.home / "project", ["/bin/sh", "-c", script]) \
                 as (args, env), \
-                open(os.devnull, "rb") as empty, tempfile.TemporaryFile() as output:
+                tempfile.TemporaryFile() as output:
             result = run_supervised(args, env, None, lambda: None, lambda: True, 1,
-                                    input_fd=empty.fileno(), output_fd=output.fileno())
+                                    input_fd=input_fd, output_fd=output.fileno())
             output.seek(0)
             lines = output.read().decode().splitlines()
         self.assertEqual(result, (7, "child_exited"))
@@ -344,7 +360,7 @@ class MacCliTests(unittest.TestCase):
 
     def test_launch_uses_seatbelt_installer_and_requires_profile_credentials_after_login(self):
         with tempfile.TemporaryDirectory() as directory:
-            home = Path(directory)
+            home = Path(directory).resolve()
             config = Config("203.0.113.1", "fixture", 22, home / "key", home / "hosts",
                             "/unused", texlive_root=None)
             sessions = []
@@ -389,6 +405,24 @@ class MacCliTests(unittest.TestCase):
                 self.assertRaisesRegex(RouteError, "texlive_root_unsupported_on_macos"):
             cli._launch(config, Path("/unused"), ["--version"], MagicMock())
         tunnel.assert_not_called()
+
+    def test_research_filesystem_is_refused_before_connecting(self):
+        config = Config("203.0.113.1", "fixture", 22, Path("k"), Path("h"), "/unused",
+                        research_filesystem=True)
+        with patch("claude_launcher.cli.SSHTunnel") as tunnel, \
+                self.assertRaisesRegex(RouteError, "research_filesystem_unsupported_on_macos"):
+            cli._launch(config, Path("/unused"), ["--version"], MagicMock())
+        tunnel.assert_not_called()
+
+    def test_doctor_reports_unsupported_macos_configuration(self):
+        config = Config("203.0.113.1", "fixture", 22, Path("k"), Path("h"), "/unused",
+                        research_filesystem=True)
+        output = io.StringIO()
+        with patch("claude_launcher.macos.isolation_report", return_value=GOOD), \
+                patch("claude_launcher.cli.shutil.which", return_value="/tool"), \
+                contextlib.redirect_stdout(output):
+            self.assertEqual(cli.doctor(config, False), 69)
+        self.assertFalse(json.loads(output.getvalue())["macos_configuration_supported"])
 
 
 if __name__ == "__main__":

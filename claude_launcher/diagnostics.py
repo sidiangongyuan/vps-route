@@ -16,6 +16,10 @@ from .wire import RouteError, proxy_json, server_health
 
 
 HINTS = {
+    "research_filesystem_unsupported_on_macos": (
+        "macOS permits only the selected workspace, private profile and temporary directory. "
+        "Set research_filesystem to false; use a separate VM for a wider untrusted workload."
+    ),
     "network_isolation_unavailable": (
         "bubblewrap cannot create a private network namespace. Install bubblewrap; on Ubuntu "
         "23.10+ AppArmor may block unprivileged user namespaces (see docs FAQ). Only Ubuntu "

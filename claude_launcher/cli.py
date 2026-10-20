@@ -70,8 +70,10 @@ def doctor(config: Config | None, connect: bool, report: Path | None = None) -> 
         ))
         checks.update(platform="macos", seatbelt_network_isolation=not failures,
                       seatbelt_check_failures=failures,
-                      home_access="open_with_credential_locations_masked")
-        isolation = ("seatbelt_network_isolation",)
+                      home_access="profile_and_workspace_only", host_mach_ipc=False,
+                      macos_configuration_supported=(config is None or (
+                          not config.research_filesystem and config.texlive_root is None)))
+        isolation = ("seatbelt_network_isolation", "macos_configuration_supported")
     else:
         checks.update(system_python_compatible=system_python_compatible(),
                       private_network_namespace=namespace_available())
@@ -232,6 +234,8 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
 
         if config.texlive_root is not None:
             raise RouteError("texlive_root_unsupported_on_macos")
+        if config.research_filesystem:
+            raise RouteError("research_filesystem_unsupported_on_macos")
         if not seatbelt_present():
             raise RouteError("seatbelt_unavailable")
     else:

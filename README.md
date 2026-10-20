@@ -4,7 +4,8 @@ Run official Claude Code in a separate local environment, with its HTTPS traffic
 routed through your own VPS over SSH. If the connection fails, there is no direct fallback.
 
 Linux, verified on Ubuntu 22.04; other distributions are untested. macOS support
-is experimental and not yet verified on a real Mac ([macOS guide](docs/MACOS.zh-CN.md)).
+is experimental. Native isolation tests run on macOS 27.0.1; real-account and VPS
+end-to-end validation is pending ([macOS guide](docs/MACOS.zh-CN.md)).
 Requires your own VPS and Claude account. Claude is downloaded during setup, not bundled
 with the tool. Not affiliated with Anthropic.
 

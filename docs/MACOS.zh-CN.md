@@ -1,7 +1,7 @@
 # macOS（实验性）
 
-macOS 支持已实现，但**尚未在真实 Mac 上验证**。首批测试请按文末“测试清单”执行，
-把输出发回作者。确认可用前，不要用于重要账号。
+macOS 为实验性支持。隔离回归测试已在 macOS 27.0.1 上执行；真实 Claude 登录、
+API 请求和 VPS 端到端流程尚未验证。测试方法见文末。
 
 ## 要求
 
@@ -17,7 +17,8 @@ brew install pipx gh
 pipx ensurepath
 gh auth login
 gh auth setup-git
-pipx install git+https://github.com/sidiangongyuan/vps-route.git
+# 在包含 macOS 实现的本地仓库中安装当前代码。
+pipx install .
 ```
 
 重新打开终端，先运行自检：
@@ -38,32 +39,43 @@ vps-route macos-check
 
 ## 隔离方式
 
-Claude 在 macOS 自带的 Seatbelt 沙箱（`sandbox-exec`）中运行：
+Claude 主进程及其子进程在默认拒绝的 Seatbelt 沙箱（`sandbox-exec`）中运行：
 
-- 禁止所有直接联网，只允许连接本机一个随机端口；工具在沙箱外把这个端口转发到
-  SSH 隧道，经 VPS 出网。SSH 断线重连时端口不变，Claude 无需重启。
-- 每次启动先在同一沙箱规则下自检：公网 IPv4/IPv6 TCP、UDP、本机其他端口、
-  钥匙串工具 `security` 和 `open` 都必须被拒绝，转发端口必须可连。任一项不符就拒绝启动。
-- 用户目录可读写，但屏蔽常见凭据位置：`.ssh`、`.config`、`.aws`、`.gnupg`、shell 配置、
-  `~/.claude*`、钥匙串、浏览器和邮件数据、`~/Library/Containers`、`Group Containers`、
-  代理客户端（Clash/mihomo/v2ray 等）数据、本工具的其他 profile 和日志，
-  以及配置里的 SSH 私钥和 known_hosts。`private_home_entries` 同样生效。
-- Claude 无法使用 macOS 钥匙串，登录保存在独立 profile 的 `.claude/.credentials.json`，
-  与本机原有 Claude 登录完全分开。登录后若该文件不存在，`auth login` 报错。
+- 仅允许 TCP 连接本机一个随机代理端口。沙箱外转发器将流量送入 SSH 隧道，经 VPS
+  出网；不允许 UDP、其他端口、Unix socket、监听或接收连接。SSH 重连时代理端口不变。
+- 不允许查询宿主 Mach 服务，包括 Launch Services、securityd 和 trustd；不允许
+  Apple Events，也不允许向沙箱外进程发信号或获取其任务端口。
+- 只有选定项目、独立 profile 和本次会话的临时目录可读写。系统运行时及工具链只读，
+  其他宿主文件内容不可读。文件元数据仍可见。项目中的指定凭据路径继续被屏蔽，
+  受保护路径的父目录不能通过改名绕过限制。
+- 每次启动先验证网络限制、宿主文件和信号限制，以及上述三类 Mach 服务的拒绝结果。
+  任一检查失败就拒绝启动。
+- TLS 使用证书文件；`SSL_CERT_FILE` 和 `CURL_CA_BUNDLE` 指向 `/etc/ssl/cert.pem`。
+  依赖宿主钥匙串或 trustd 的客户端可能无法工作，不应通过放行服务来绕过限制。
+- 登录须保存到独立 profile 的 `.claude/.credentials.json`；该文件不存在时登录检查失败。
 
-## 与 Linux 的差异
+## 与 Linux 的差异和边界
 
-- 会话里无法访问本机任何 `localhost` 服务，包括 Claude 自己启动的开发服务器
-  （浏览器仍可从外部访问它）。Unix socket 也被禁止：Docker、ssh-agent、tmux 不可用。
-- 转发端口在会话期间可被本机其他进程连接，连接会经你的 VPS 出网。
-- 屏蔽按路径生效，被屏蔽项的文件名和大小仍可见；它防止误读，不防刻意绕过的恶意代码。
-- 通过系统服务间接完成的操作（如其他应用、系统更新与证书检查）不在沙箱网络边界内。
-  `open` 命令和 Apple Events 已禁止，Claude 无法自动替你打开浏览器。
-- Claude 自带的 `/sandbox` 功能关闭（不能嵌套沙箱）。
-- 项目 `.claude/` 里的 settings、commands、agents 会正常加载（Linux 上只加载
-  `CLAUDE.md` 和 rules）；hooks 和 MCP 仍然关闭。本机 `~/.claude/skills` 不会合并进来，
-  技能请放在独立 profile 的 `.claude/skills/`。
-- `/status` 中的代理是 `http://127.0.0.1:随机端口`，不是 17878。
+- 不创建独立网络命名空间，通过内核权限限制连接。不能访问 localhost 开发服务，
+  也不能在沙箱内启动监听服务；Docker socket、ssh-agent、tmux 不可用。
+- `research_filesystem=true` 不受支持，不能开放整个宿主 HOME。Homebrew 工具链只读；
+  安装在其他宿主用户目录中的工具不自动获得访问权。
+- 转发端口可被本机其他进程使用。宿主用户、启动器、SSH、终端和内核属于信任边界。
+- 项目和 profile 仍与宿主共享。宿主 IDE、文件同步器、自动执行器或之后执行的项目
+  脚本可以在沙箱外产生动作。已有硬链接、继承资源及系统漏洞也不能靠这些测试排除。
+  **若要求恶意代码不能通过任何间接方式借宿主联网，应使用控制出口的独立虚拟机，
+  并关闭共享可写目录和宿主 IPC。** Linux 版同样未承诺抵抗任意恶意代码。
+- Claude 自带的 `/sandbox` 关闭。项目 `.claude/` 的 settings、commands、agents
+  正常加载；hooks 和 MCP 仍关闭。本机 `~/.claude/skills` 不会合并，技能放在独立 profile。
+- Apple 已将 `sandbox-exec` 标为 deprecated，需要按 macOS 版本验证。
+
+本地回归测试不需要账号或 VPS，只使用临时文件和本地测试服务：
+
+```bash
+python3 -m unittest discover -s tests -p 'test_macos*.py' -v
+```
+
+测试需在普通终端运行；已有外层沙箱可能阻止创建测试端口或嵌套 Seatbelt。
 
 ## 测试清单（首批测试者）
 
