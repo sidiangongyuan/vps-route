@@ -11,7 +11,7 @@ from unittest.mock import patch
 from claude_launcher.config import Config
 from claude_launcher.entrypoint import main
 from claude_launcher.provision import (
-    MANAGED_HEADER, SERVER_FILES, SERVICE_NAME, apply_server, deploy_server,
+    MANAGED_HEADER, SERVER_FILES, SERVICE_NAME, apply_server, deploy_server, service_text,
 )
 from claude_launcher.setup import default_config_path, initialize_config
 from claude_launcher.wire import RouteError
@@ -20,7 +20,7 @@ from claude_launcher.wire import RouteError
 class SetupTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="vps-route-setup-")
-        self.home = Path(self.temporary.name)
+        self.home = Path(self.temporary.name).resolve()
         self.home_patch = patch.object(Path, "home", return_value=self.home)
         self.home_patch.start()
         self.profile_patch = patch(
@@ -200,6 +200,14 @@ class SetupTests(unittest.TestCase):
     def payload(self):
         return {"remote_socket": str(self.home / ".local/state/connect/connect.sock"),
                 "files": {name: "# synthetic server fixture\n" for name in SERVER_FILES}}
+
+    def test_working_directory_is_literal_and_specifiers_are_escaped(self):
+        root = Path('/home/user with space/100%/server')
+        unit = service_text(root, root / "connect.sock")
+        self.assertIn("WorkingDirectory=/home/user with space/100%%/server\n", unit)
+        self.assertIn('--socket "/home/user with space/100%%/server/connect.sock"\n', unit)
+        with self.assertRaisesRegex(ValueError, "invalid_service_path"):
+            service_text(Path("/home/user\ninjected"), root / "connect.sock")
 
     def test_service_deploy_only_managed_files_and_service(self):
         units = self.home / "units"

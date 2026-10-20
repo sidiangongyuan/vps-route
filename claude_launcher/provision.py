@@ -46,17 +46,20 @@ def atomic_text(path: Path, content: str) -> None:
 
 
 def service_text(server_root: Path, socket_path: Path, *, system: bool = False) -> str:
-    # systemd command-line quoting is not shell quoting.
-    def quote(path: Path) -> str:
+    def value(path: Path) -> str:
         value = str(path)
         if any(ord(char) < 32 for char in value):
             raise ValueError("invalid_service_path")
-        return '"' + value.replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"') + '"'
+        return value.replace("%", "%%")
+
+    # ExecStart parses quoted arguments; WorkingDirectory takes a literal path.
+    def quote(path: Path) -> str:
+        return '"' + value(path).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
     return (
         MANAGED_HEADER + "[Unit]\nDescription=VPS Route private HTTPS CONNECT service\n"
         "After=network.target\n\n[Service]\nType=simple\n"
-        f"WorkingDirectory={quote(server_root)}\n"
+        f"WorkingDirectory={value(server_root)}\n"
         f"ExecStart=/usr/bin/python3 -m claude_launcher.remote --socket {quote(socket_path)}\n"
         "Restart=on-failure\nRestartSec=3\nUMask=0077\nNoNewPrivileges=yes\n"
         f"\n[Install]\nWantedBy={'multi-user.target' if system else 'default.target'}\n"
