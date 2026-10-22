@@ -1,7 +1,7 @@
 # macOS（实验性）
 
-macOS 为实验性支持。隔离回归测试已在 macOS 27.0.1 上执行；真实 Claude 登录、
-API 请求和 VPS 端到端流程尚未验证。测试方法见文末。
+macOS 为实验性支持。隔离回归测试已在 macOS 27.0.1 上执行；这些测试不代表
+真实 Claude 交互登录和模型请求已完成端到端验证。测试方法见文末。
 
 ## 要求
 
@@ -52,12 +52,65 @@ Claude 主进程及其子进程在默认拒绝的 Seatbelt 沙箱（`sandbox-exe
   任一检查失败就拒绝启动。
 - TLS 使用证书文件；`SSL_CERT_FILE` 和 `CURL_CA_BUNDLE` 指向 `/etc/ssl/cert.pem`。
   依赖宿主钥匙串或 trustd 的客户端可能无法工作，不应通过放行服务来绕过限制。
-- 登录须保存到独立 profile 的 `.claude/.credentials.json`；该文件不存在时登录检查失败。
+- `auth login` 须保存到独立 profile 的 `.claude/.credentials.json`；
+  该文件不存在时登录检查失败。已有长期 token 的使用方式见
+  [token 导入说明](USAGE.zh-CN.md#使用已有的长期-oauth-token)。
+
+## 额外的本地读写目录
+
+默认只允许当前工作目录、独立 profile 和会话私有临时目录写入。
+可通过 `macos_allowed_roots` 为 `run` 增加本地目录，例如：
+
+```bash
+vps-route config set macos_allowed_roots '["/absolute/path/work","/absolute/path/misc"]' --apply
+```
+
+下次 `run` 生效，子目录也可读写；现有会话不变。目录须存在，
+符号链接会解析到真实路径；整个 HOME、HOME 的祖先和受保护凭据目录会被拒绝。
+受保护路径的拒绝规则仍优先，链接到白名单外也不会获得额外权限。
+`auth login/status`、安装和更新不使用该白名单，网络权限不变。
+`doctor` 和 `macos-check` 会将配置的目录纳入隔离检查。
+
+macOS 会话同时设置 `TMPDIR` 和 `CLAUDE_CODE_TMPDIR`，让 Claude 自身的
+临时文件保留在会话私有目录中；不会放开整个系统 `/tmp`。
+
+## 沙箱内使用 GitHub CLI
+
+用 Go 1.26 构建的 `gh` 在 macOS 上通过系统服务校验证书，即使设置
+`SSL_CERT_FILE`，也可能因沙箱禁止访问 trustd 而报 `x509: OSStatus -26276`。
+不要为此开放 Mach 服务或禁用 TLS 校验。
+
+可使用 [沙箱专用 gh 构建和安装说明](../tools/macos-gh/README.md)：
+用 Go 1.27.3 构建官方 `gh` v2.93.0，在独立 profile 中安装专用入口，
+明确启用基于 `/etc/ssl/cert.pem` 的 Go 证书校验。该入口仍受现有 Seatbelt
+和 SSH 代理限制，不增加网络、文件或系统服务权限。宿主 Homebrew 的 `gh` 不变。
+
+GitHub 登录与 Claude 登录独立。沙箱的 GitHub 凭据保存在 profile 的
+`.config/gh/hosts.yml`，不能读取宿主钥匙串。复用宿主 token 时，应由宿主
+一次性读取，在内存中通过标准输入交给沙箱内的
+`gh auth login --hostname github.com --git-protocol https --with-token --insecure-storage`；
+该命令的网络验证也必须经过 VPS 通道。不要把 token 放进命令参数、环境变量、
+日志或聊天。
+
+这里的 `--insecure-storage` 仅表示使用权限为 `0600` 的明文凭据文件，
+不关闭 HTTPS 校验。Claude 及沙箱内子进程可以使用这个 token，其 GitHub
+权限与原 token 相同。导入后，在新启动的 `vps-route run` 中检查：
+
+```bash
+! command -v gh
+! gh auth status --hostname github.com
+```
+
+第一条应指向独立 profile 的 `.local/bin/gh`，第二条应显示已登录。
 
 ## 与 Linux 的差异和边界
 
+Go、Python、Git 及原生编译器的入口配置和验证见
+[沙箱开发工具说明](../tools/macos-dev/README.md)。这些入口不增加隔离权限。
+
 - 不创建独立网络命名空间，通过内核权限限制连接。不能访问 localhost 开发服务，
   也不能在沙箱内启动监听服务；Docker socket、ssh-agent、tmux 不可用。
+  唯一允许的连接是本会话 IPv4 TCP 代理；同端口的 IPv6、UDP 及公网地址仍被拒绝。
 - `research_filesystem=true` 不受支持，不能开放整个宿主 HOME。Homebrew 工具链只读；
   安装在其他宿主用户目录中的工具不自动获得访问权。
 - 转发端口可被本机其他进程使用。宿主用户、启动器、SSH、终端和内核属于信任边界。
@@ -76,6 +129,19 @@ python3 -m unittest discover -s tests -p 'test_macos*.py' -v
 ```
 
 测试需在普通终端运行；已有外层沙箱可能阻止创建测试端口或嵌套 Seatbelt。
+
+完整测试使用 `python3 -m unittest discover -s tests -v`。通用测试和 macOS
+测试在 Mac 上运行；依赖 Linux 网络命名空间或 pidfd 的原生测试会明确跳过，
+需在 Linux 上另行执行。模拟 Linux CLI 的单元测试显式选择 Linux 分支，不修改
+启动器的平台判断。临时目录先解析系统别名，避免 `/var` 和 `/private/var` 的
+字符串差异影响路径断言。
+
+终端退出清理使用立即恢复和输入刷新，不等待终端输出排空。重置控制序列的
+写入和最后退出提示都有时间上限；终端停止读取或缓冲区填满时，仍会完成清理。此时终端可能
+收不到全部重置序列，但不会阻塞启动器退出，也不会增加沙箱权限。
+输入和输出转发使用有限缓冲，阻塞时仍处理退出和连接状态。子进程退出后继续
+发送剩余输出；连续一秒无法写出数据时，会丢弃未发送的尾部输出并完成退出。
+读端持续接收数据时不受总耗时限制。
 
 ## 测试清单（首批测试者）
 

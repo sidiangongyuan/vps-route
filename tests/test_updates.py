@@ -16,7 +16,7 @@ from claude_launcher.wire import RouteError
 class UpdateTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.home = Path(self.temporary.name)
+        self.home = Path(self.temporary.name).resolve()
         self.home_patch = patch.object(Path, "home", return_value=self.home)
         self.home_patch.start()
 

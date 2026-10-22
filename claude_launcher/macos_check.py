@@ -21,7 +21,7 @@ from . import __version__
 from .config import Config
 from .macos import (
     SANDBOX_EXEC, check_failures, child_environment, private_paths, run_self_check,
-    seatbelt_present, seatbelt_profile,
+    seatbelt_present, seatbelt_profile, validated_allowed_roots,
 )
 from .wire import RouteError
 
@@ -114,7 +114,8 @@ def report(config: Config | None) -> dict:
         stand_in.listen(8)
         port = stand_in.getsockname()[1]
         profile_home = Path(directory).resolve()
-        profile = seatbelt_profile(port, profile_home, private)
+        extra = validated_allowed_roots(config.macos_allowed_roots if config else (), private)
+        profile = seatbelt_profile(port, profile_home, private, allowed_roots=extra)
         isolation = run_self_check(profile, port, home)
         failures = check_failures(isolation)
         result["isolation"] = isolation

@@ -134,10 +134,12 @@ def mach_lookup(name):
     return "blocked" if result == 1100 else str(result)
 print(json.dumps({
     "tcp4_public": attempt(socket.AF_INET, socket.SOCK_STREAM, ("203.0.113.1", 443)),
+    "tcp4_public_proxy_port": attempt(socket.AF_INET, socket.SOCK_STREAM, ("203.0.113.1", proxy)),
     "tcp6_public": attempt(socket.AF_INET6, socket.SOCK_STREAM, ("2001:db8::1", 443)),
     "udp4_public": attempt(socket.AF_INET, socket.SOCK_DGRAM, ("203.0.113.1", 53)),
     "loopback_other_port": attempt(socket.AF_INET, socket.SOCK_STREAM, ("127.0.0.1", decoy)),
     "loopback_proxy_port": attempt(socket.AF_INET, socket.SOCK_STREAM, ("127.0.0.1", proxy)),
+    "loopback_proxy_ipv6": attempt(socket.AF_INET6, socket.SOCK_STREAM, ("::1", proxy)),
     "udp_proxy_port": attempt(socket.AF_INET, socket.SOCK_DGRAM, ("127.0.0.1", proxy)),
     "keychain_tool": execute("/usr/bin/security"),
     "open_tool": execute("/usr/bin/open"),
@@ -153,10 +155,13 @@ print(json.dumps({
 # Errors that mean no packet left the host are acceptable where IPv6 is absent.
 REQUIRED = {
     "tcp4_public": {"blocked"},
+    "tcp4_public_proxy_port": {"blocked"},
     "tcp6_public": {"blocked", "unsupported", "ENETUNREACH", "EADDRNOTAVAIL", "EAFNOSUPPORT"},
     "udp4_public": {"blocked"},
     "loopback_other_port": {"blocked"},
     "loopback_proxy_port": {"connected"},
+    # Refusal alone does not prove isolation: a host service can bind later.
+    "loopback_proxy_ipv6": {"blocked", "unsupported", "EAFNOSUPPORT"},
     "udp_proxy_port": {"blocked"},
     "keychain_tool": {"blocked"},
     "open_tool": {"blocked"},
@@ -211,7 +216,8 @@ def private_paths(home: Path, extra: tuple[str, ...] = (),
 
 
 def seatbelt_profile(proxy_port: int, profile_home: Path, private: list[Path], *,
-                     workspace: Path | None = None, temporary: Path | None = None) -> str:
+                     workspace: Path | None = None, temporary: Path | None = None,
+                     allowed_roots: tuple[Path, ...] = ()) -> str:
     """Default-deny policy: no host IPC, no host signals, and explicit file roots.
 
     Mach services (including trustd, securityd and Launch Services) remain denied.
@@ -220,6 +226,7 @@ def seatbelt_profile(proxy_port: int, profile_home: Path, private: list[Path], *
     profile_home = profile_home.resolve()
     writable = {profile_home}
     writable.update(path.resolve() for path in (workspace, temporary) if path is not None)
+    writable.update(allowed_roots)
     runtimes = {Path(path).resolve() for path in RUNTIME_ROOTS}
     package = Path(__file__).resolve().parent
     lines = [
@@ -249,7 +256,9 @@ def seatbelt_profile(proxy_port: int, profile_home: Path, private: list[Path], *
         '(extension "com.apple.sandbox.pty")))',
         # TCP only: an unrelated UDP service may use the same port number.
         # No binding/listening, even on loopback. No Unix-domain sockets.
-        f'(allow network-outbound (remote tcp "localhost:{int(proxy_port)}"))',
+        # Match the IPv4-only relay exactly. "localhost" also permits an
+        # unrelated host IPv6 listener that uses the same numeric port.
+        f'(allow network-outbound (remote tcp4 "localhost:{int(proxy_port)}"))',
     ]
     for path in private:
         # The profile is the only exception inside protected tool storage.
@@ -350,6 +359,9 @@ def child_environment(profile_home: Path, proxy_port: int, timezone: str | None,
     environment["CURL_CA_BUNDLE"] = "/etc/ssl/cert.pem"
     if temporary is not None:
         environment["TMPDIR"] = str(temporary) + "/"
+        # Claude defaults to /tmp on macOS even when TMPDIR is set.
+        # Keep its settings, scratchpad and task files in this session's root.
+        environment["CLAUDE_CODE_TMPDIR"] = str(temporary)
     if timezone is not None:
         environment["TZ"] = timezone
     proxy = f"http://127.0.0.1:{int(proxy_port)}"
@@ -365,16 +377,34 @@ def child_environment(profile_home: Path, proxy_port: int, timezone: str | None,
     return environment
 
 
+def validated_allowed_roots(roots: tuple[str, ...], private: list[Path]) -> tuple[Path, ...]:
+    """Resolve aliases before granting access; protected paths keep their denies."""
+    home = Path.home().resolve()
+    result = []
+    for value in roots:
+        path = Path(value)
+        if not path.is_absolute() or ".." in path.parts:
+            raise RouteError("invalid_macos_allowed_root")
+        path = path.resolve()
+        if (not path.is_dir() or path == home or path in home.parents
+                or any(path.is_relative_to(home / name) for name in PROTECTED_WORKSPACES)
+                or any(path.is_relative_to(item) for item in private)):
+            raise RouteError("invalid_macos_allowed_root")
+        result.append(path)
+    return tuple(sorted(set(result)))
+
+
 @contextlib.contextmanager
 def seatbelt_session(
     socket_path: Path, profile_home: Path, workspace: Path, command: list[str], *,
     private_home_entries: tuple[str, ...] = (), protected_files: tuple[Path, ...] = (),
-    timezone: str | None = None,
+    timezone: str | None = None, allowed_roots: tuple[str, ...] = (),
 ) -> Iterator[tuple[list[str], dict[str, str]]]:
     """Own the loopback relay for the duration of one supervised command."""
     profile_home, workspace, private = _validated_paths(
         profile_home, workspace, private_home_entries, protected_files,
     )
+    extra = validated_allowed_roots(allowed_roots, private)
     if not seatbelt_present():
         raise RouteError("seatbelt_unavailable")
     with tempfile.TemporaryDirectory(prefix="vps-route-sandbox-") as directory, \
@@ -385,7 +415,7 @@ def seatbelt_session(
             port = server.server_address[1]
             temporary = Path(directory).resolve()
             profile = seatbelt_profile(port, profile_home, private,
-                                       workspace=workspace, temporary=temporary)
+                                       workspace=workspace, temporary=temporary, allowed_roots=extra)
             if check_failures(run_self_check(profile, port, Path.home().resolve())):
                 raise RouteError("network_isolation_unverified")
             args = ["/bin/sh", "-c", 'cd -- "$1" && shift && exec "$@"', "vps-route",
@@ -396,7 +426,8 @@ def seatbelt_session(
 
 
 def isolation_report(private_home_entries: tuple[str, ...] = (),
-                     protected_files: tuple[Path, ...] = ()) -> dict:
+                     protected_files: tuple[Path, ...] = (),
+                     allowed_roots: tuple[str, ...] = ()) -> dict:
     """Self-check with a stand-in proxy listener; used by doctor and macos-check."""
     if not seatbelt_present():
         return {"sandbox_started": False, "sandbox_exec_present": False}
@@ -408,8 +439,9 @@ def isolation_report(private_home_entries: tuple[str, ...] = (),
         stand_in.bind(("127.0.0.1", 0))
         stand_in.listen(4)
         port = stand_in.getsockname()[1]
-        profile = seatbelt_profile(port, Path(directory).resolve(),
-                                   private_paths(home, private_home_entries, protected_files))
+        private = private_paths(home, private_home_entries, protected_files)
+        extra = validated_allowed_roots(allowed_roots, private)
+        profile = seatbelt_profile(port, Path(directory).resolve(), private, allowed_roots=extra)
         return run_self_check(profile, port, home)
 
 

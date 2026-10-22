@@ -24,7 +24,7 @@ from .setup import default_config_path, initialize_config
 from .sessions import SessionLease, list_sessions, maintenance_barrier, stop_session
 from .runner import (
     ENTRY_DIR, RuntimeConnectivityMonitor, SSHTunnel, connectivity_check, receipt, run_supervised,
-    sandbox_command, ssh_arguments,
+    sandbox_command, ssh_arguments, write_exit_notice,
 )
 from .wire import RouteError
 from .token_auth import apply_token, import_token, load_token, remove_token
@@ -68,10 +68,13 @@ def doctor(config: Config | None, connect: bool, report: Path | None = None) -> 
         failures = check_failures(isolation_report(
             config.private_home_entries if config else (),
             (config.identity_file, config.known_hosts) if config else (),
+            config.macos_allowed_roots if config else (),
         ))
         checks.update(platform="macos", seatbelt_network_isolation=not failures,
                       seatbelt_check_failures=failures,
-                      home_access="profile_and_workspace_only", host_mach_ipc=False,
+                      home_access=("profile_workspace_and_allowed_roots"
+                                   if config and config.macos_allowed_roots
+                                   else "profile_and_workspace_only"), host_mach_ipc=False,
                       macos_configuration_supported=(config is None or (
                           not config.research_filesystem and config.texlive_root is None)))
         isolation = ("seatbelt_network_isolation", "macos_configuration_supported")
@@ -201,11 +204,11 @@ def launch(config: Config, workspace: Path, arguments: list[str], install: bool 
             audit.write("exit")
         except (OSError, RouteError):
             # Never hide a route failure or change the completed child's result.
-            print("vps-route: usage_log_write_failed", file=sys.stderr)
+            write_exit_notice("vps-route: usage_log_write_failed", file=sys.stderr)
 
 
 def _isolated(config: Config, socket_path: Path, profile_home: Path, workspace: Path,
-              command: list[str], **options: object):
+              command: list[str], *, allow_extra_roots: bool = False, **options: object):
     """Linux returns a ready namespace command; macOS also owns a loopback relay."""
     if MACOS:
         from .macos import seatbelt_session
@@ -213,7 +216,8 @@ def _isolated(config: Config, socket_path: Path, profile_home: Path, workspace: 
         return seatbelt_session(socket_path, profile_home, workspace, command,
                                 private_home_entries=config.private_home_entries,
                                 protected_files=(config.identity_file, config.known_hosts),
-                                timezone=config.timezone)
+                                timezone=config.timezone,
+                                allowed_roots=config.macos_allowed_roots if allow_extra_roots else ())
     return contextlib.nullcontext(
         sandbox_command(socket_path, profile_home, workspace, command, **options)
     )
@@ -295,6 +299,7 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                 private_home_entries=config.private_home_entries,
                 timezone=config.timezone,
                 reconnectable=keep_session,
+                allow_extra_roots=audit.operation == "run" and not install,
             ) as (command, environment):
                 apply_token(environment, profile_home, arguments, install=install, login=login)
                 code, reason = run_supervised(
@@ -351,7 +356,7 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
             tunnel.dispose()
             audit.exit_code, audit.reason = code, reason
             receipt(profile_home, code, reason)
-    print(f"\nvps-route: {reason}; exit={code}")
+    write_exit_notice(f"\nvps-route: {reason}; exit={code}")
     return code
 
 
@@ -385,7 +390,7 @@ def network_test(config: Config) -> int:
             )
         finally:
             tunnel.dispose()
-    print(f"network-test: {reason}; exit={code}")
+    write_exit_notice(f"network-test: {reason}; exit={code}")
     return code
 
 
@@ -675,17 +680,17 @@ def main() -> int:
                       safe_mode=safe_mode, skills_mode=args.action == "run" and not safe_mode,
                       verify_after=args.action in {"install", "update"})
     except RouteError as exc:
-        print(f"vps-route: {exc}")
+        write_exit_notice(f"vps-route: {exc}")
         from .diagnostics import HINTS
 
         if str(exc) in HINTS:
-            print(f"hint: {HINTS[str(exc)]}")
+            write_exit_notice(f"hint: {HINTS[str(exc)]}")
         return 69
     except OSError:
-        print("vps-route: local_operation_failed")
+        write_exit_notice("vps-route: local_operation_failed")
         return 70
     except (EOFError, KeyboardInterrupt):
-        print("vps-route: cancelled")
+        write_exit_notice("vps-route: cancelled")
         return 130
 
 

@@ -1,4 +1,4 @@
-"""CLI policy routing without starting the real route or account client."""
+"""Linux CLI routing with mocked execution; native Mac routing is in test_macos."""
 
 import contextlib
 import io
@@ -13,6 +13,9 @@ from claude_launcher.config import Config
 
 class CliPolicyTests(unittest.TestCase):
     def setUp(self):
+        platform = patch.object(cli, "MACOS", False)
+        platform.start()
+        self.addCleanup(platform.stop)
         self.config = Config("203.0.113.1", "fixture", 22, Path("unused"), Path("unused"),
                              "/unused", "203.0.113.7", "US")
         barrier = patch.object(cli, "maintenance_barrier", return_value=contextlib.nullcontext())

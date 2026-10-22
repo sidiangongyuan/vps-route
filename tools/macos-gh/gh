@@ -1,0 +1,8 @@
+#!/bin/sh
+# This launcher runs inside the existing Seatbelt policy. It grants no access.
+set -eu
+export SSL_CERT_FILE=/etc/ssl/cert.pem
+unset SSL_CERT_DIR
+# gh's go.mod targets Go 1.26, so explicitly enable the Go 1.27 verifier.
+export GODEBUG=x509sslcertoverrideplatform=1
+exec "$HOME/.local/libexec/vps-route-gh/gh" "$@"

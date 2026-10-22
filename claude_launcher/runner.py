@@ -54,6 +54,46 @@ TERMINAL_RESET = (
 TERMINAL_HARD_RESET = b"\x18\x1b\\\x1bc" + TERMINAL_RESET
 
 
+def _write_bounded(descriptor: int, data: bytes) -> None:
+    """Best-effort UI write; a stopped reader must not block cleanup."""
+    flags = fcntl.fcntl(descriptor, fcntl.F_GETFL)
+    try:
+        fcntl.fcntl(descriptor, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        deadline = time.monotonic() + 0.1
+        while data:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([], [descriptor], [], remaining)[1]:
+                break
+            try:
+                written = os.write(descriptor, data)
+            except BlockingIOError:
+                continue
+            if not written:
+                break
+            data = data[written:]
+    finally:
+        fcntl.fcntl(descriptor, fcntl.F_SETFL, flags)
+
+
+def write_exit_notice(message: str, *, file=None) -> None:
+    """Report an exit without blocking on a full terminal or redirected pipe."""
+    stream = sys.stdout if file is None else file
+    try:
+        descriptor = stream.fileno()
+    except (AttributeError, OSError, ValueError):
+        # In-memory streams used by embedders and tests have no descriptor.
+        try:
+            print(message, file=stream)
+        except (OSError, ValueError):
+            pass
+        return
+    try:
+        _write_bounded(descriptor, (message + "\n").encode(
+            getattr(stream, "encoding", None) or "utf-8", errors="replace"))
+    except OSError:
+        pass
+
+
 def _restore_terminal(input_fd: int, output_fd: int, attributes: list | None,
                       *, hard_reset: bool = False, rendered_tui: bool = False) -> None:
     """Stop mouse tracking and absorb in-flight input before restoring shell echo.
@@ -69,12 +109,12 @@ def _restore_terminal(input_fd: int, output_fd: int, attributes: list | None,
     try:
         if (terminal_fd == input_fd
                 and fcntl.fcntl(input_fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY):
-            owned_fd = os.open(os.ttyname(input_fd), os.O_WRONLY | os.O_NOCTTY)
+            owned_fd = os.open(os.ttyname(input_fd), os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
             terminal_fd = owned_fd
         if attributes is not None:
             tty.setraw(input_fd, termios.TCSANOW)
         if terminal_fd is not None:
-            os.write(terminal_fd, reset)
+            _write_bounded(terminal_fd, reset)
         if attributes is not None and terminal_fd is not None:
             deadline = time.monotonic() + 1.0
             quiet_until = time.monotonic() + 0.35
@@ -90,12 +130,20 @@ def _restore_terminal(input_fd: int, output_fd: int, attributes: list | None,
     finally:
         if terminal_fd is not None:
             try:
-                os.write(terminal_fd, reset)
+                _write_bounded(terminal_fd, reset)
             except OSError:
                 pass
         if attributes is not None:
             try:
-                termios.tcsetattr(input_fd, termios.TCSAFLUSH, attributes)
+                # TCSAFLUSH waits for output to drain and can hang indefinitely
+                # on macOS when the PTY peer no longer reads. Restore now and
+                # then flush input, including BSD's pending canonical retype.
+                # Leave output queued so the terminal can still receive resets.
+                termios.tcsetattr(input_fd, termios.TCSANOW, attributes)
+            except (OSError, termios.error):
+                pass
+            try:
+                termios.tcflush(input_fd, termios.TCIFLUSH)
             except (OSError, termios.error):
                 pass
         if owned_fd is not None:
@@ -548,13 +596,17 @@ def run_supervised(
     reaped = False
     status = 0
     rendered_tui = False
+    pending_output = bytearray()
+    pending_input = bytearray()
+    output_flags = None
+    exit_deadline = None
 
     def render(data: bytes) -> None:
         nonlocal rendered_tui
         # Relay clients can expose pipes rather than a local TTY. Only append
         # terminal cleanup to such output if the child actually rendered ANSI.
         rendered_tui = rendered_tui or b"\x1b" in data
-        os.write(output_fd, data)
+        pending_output.extend(data)
 
     try:
         signal.signal(signal.SIGWINCH, resize)
@@ -562,25 +614,27 @@ def run_supervised(
         signal.signal(signal.SIGTERM, interrupted)
         resize()
         if old_tty is not None:
-            tty.setraw(input_fd)
+            tty.setraw(input_fd, termios.TCSANOW)
+        output_flags = fcntl.fcntl(output_fd, fcntl.F_GETFL)
+        fcntl.fcntl(output_fd, fcntl.F_SETFL, output_flags | os.O_NONBLOCK)
+        os.set_blocking(master, False)
         if worker is not None:
             worker.start()
         inputs = [master, input_fd]
         while True:
-            observed, status = os.waitpid(pid, os.WNOHANG)
-            if observed:
-                reaped = True
-                # Drain output already buffered by the PTY after normal exit.
-                while select.select([master], [], [], 0)[0]:
-                    try:
-                        data = os.read(master, 65536)
-                    except OSError:
-                        break
-                    if not data:
-                        break
-                    render(data)
+            if not reaped:
+                observed, status = os.waitpid(pid, os.WNOHANG)
+                if observed:
+                    reaped = True
+                    finished.set()  # Late connectivity results cannot replace the child's exit.
+                    pending_input.clear()
+                    # Bound inactivity after exit, not total drain time: a slow
+                    # reader must still receive all remaining output.
+                    exit_deadline = time.monotonic() + 1.0
+            if reaped and ((master not in inputs and not pending_output)
+                           or time.monotonic() >= exit_deadline):
                 break
-            if reconnect is None and not route_alive():
+            if not reaped and reconnect is None and not route_alive():
                 fail("ssh_tunnel_lost")
             if failed.is_set():
                 break
@@ -597,11 +651,39 @@ def run_supervised(
                         connection_event(event, detail)
                     except (OSError, RouteError):
                         pass
-            readable, _, _ = select.select(inputs, [], [], 0.1)
+            # Apply backpressure to the child, but keep reading user input and
+            # checking process/route state while terminal output is blocked.
+            readers = [fd for fd in inputs
+                       if (fd != master or len(pending_output) < 65536)
+                       and (fd == master or (not reaped and len(pending_input) < 65536))]
+            readable, writable, _ = select.select(
+                readers, ([output_fd] if pending_output else [])
+                + ([master] if pending_input and not reaped else []), [], 0.1,
+            )
+            if output_fd in writable:
+                try:
+                    written = os.write(output_fd, pending_output)
+                    del pending_output[:written]
+                    if reaped and written:
+                        exit_deadline = time.monotonic() + 1.0
+                except BlockingIOError:
+                    pass
+            if master in writable:
+                try:
+                    written = os.write(master, pending_input)
+                    del pending_input[:written]
+                except BlockingIOError:
+                    pass
+                except OSError as exc:
+                    if exc.errno != errno.EIO:
+                        raise
+                    pending_input.clear()  # PTY slave closed; reap on the next iteration.
             for source in readable:
                 try:
                     data = os.read(source, 65536)
                 except OSError as exc:
+                    if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                        continue
                     if exc.errno == errno.EIO and source == master:
                         inputs.remove(master)
                         continue
@@ -609,12 +691,12 @@ def run_supervised(
                 if not data:
                     inputs.remove(source)
                     if source == input_fd:
-                        os.write(master, b"\x04")
+                        pending_input.extend(b"\x04")
                     continue
                 if source == master:
                     render(data)
                 else:
-                    os.write(master, data)
+                    pending_input.extend(data)
     finally:
         finished.set()
         try:
@@ -643,6 +725,11 @@ def run_supervised(
                     worker.join(timeout=1)
         finally:
             try:
+                if output_flags is not None:
+                    try:
+                        fcntl.fcntl(output_fd, fcntl.F_SETFL, output_flags)
+                    except OSError:
+                        pass
                 _restore_terminal(input_fd, output_fd, old_tty,
                                   hard_reset=bool(failure), rendered_tui=rendered_tui)
             finally:

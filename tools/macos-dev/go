@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+# Go 1.26 uses host trust services even when SSL_CERT_FILE is set.
+export SSL_CERT_FILE=/etc/ssl/cert.pem
+unset SSL_CERT_DIR
+export GODEBUG=x509sslcertoverrideplatform=1
+export GOTOOLCHAIN=local
+exec "$HOME/.local/libexec/vps-route-go/go1.27.3/bin/go" "$@"

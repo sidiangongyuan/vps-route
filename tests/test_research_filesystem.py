@@ -6,6 +6,7 @@ import socket
 import subprocess
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -31,6 +32,7 @@ class ResearchFilesystemTests(unittest.TestCase):
                                         Path('/tmp/upstream.sock'))
         self.assertEqual(mounts, ['--ro-bind', '/dev/null', '/srv/accessible.sock'])
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_research_access_private_overlays_and_network_isolation(self):
         with tempfile.TemporaryDirectory(prefix='route-research-') as temporary:
             root = Path(temporary)

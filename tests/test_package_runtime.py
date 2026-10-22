@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,7 +15,7 @@ from claude_launcher import runner
 class PackageRuntimeTests(unittest.TestCase):
     def test_generated_browser_entry_is_executable_and_refuses_unrelated_files(self):
         with tempfile.TemporaryDirectory() as temporary:
-            profile = Path(temporary)
+            profile = Path(temporary).resolve()
             hook = runner.prepare_browser_hook(profile)
             result = subprocess.run(
                 [str(hook), "https://claude.com/cai/oauth/authorize?state=fixture"],
@@ -30,9 +31,10 @@ class PackageRuntimeTests(unittest.TestCase):
                 runner.prepare_browser_hook(profile)
             self.assertEqual(hook.read_text(), "unrelated user file")
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_only_package_is_exposed_and_venv_path_survives_private_home_masks(self):
         with tempfile.TemporaryDirectory(prefix="vps-route-package-") as temporary:
-            home = Path(temporary)
+            home = Path(temporary).resolve()
             package = home / ".local/pipx/venvs/route/lib/site-packages/claude_launcher"
             package.parent.mkdir(parents=True)
             shutil.copytree(runner.PACKAGE_DIR, package, ignore=shutil.ignore_patterns("__pycache__"))

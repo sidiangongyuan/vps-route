@@ -4,6 +4,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -49,7 +50,7 @@ class AuthTests(unittest.TestCase):
 
     def exercise_login(self, authorization_code: str) -> tuple[int, str]:
         with tempfile.TemporaryDirectory(prefix="auth-fixture-") as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             profile, workspace = root / "profile", root / "workspace"
             profile.mkdir(mode=0o700)
             workspace.mkdir(mode=0o700)
@@ -89,11 +90,13 @@ class AuthTests(unittest.TestCase):
                 if writer != -1:
                     os.close(writer)
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_manual_code_roundtrip(self):
         code, transcript = self.exercise_login("synthetic-code#synthetic-state-123")
         self.assertEqual(code, 0, transcript)
         self.assertIn("SYNTHETIC_AUTH_COMPLETED", transcript)
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_wrong_code_is_rejected_by_client(self):
         code, transcript = self.exercise_login("wrong-code#synthetic-state-123")
         self.assertEqual(code, 3, transcript)

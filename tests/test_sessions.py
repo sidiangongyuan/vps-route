@@ -20,7 +20,7 @@ from claude_launcher.wire import RouteError
 class SessionTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.home = Path(self.temporary.name)
+        self.home = Path(self.temporary.name).resolve()
         self.patch = patch.object(Path, "home", return_value=self.home)
         self.patch.start()
 
@@ -67,6 +67,7 @@ class SessionTests(unittest.TestCase):
         with self.assertRaisesRegex(RouteError, "stale"):
             stop_session("c" * 16)
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux pidfd process signalling")
     def test_stop_signals_only_registered_test_launcher(self):
         script = (
             "from pathlib import Path; from unittest.mock import patch; import time,sys; "

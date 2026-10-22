@@ -22,7 +22,8 @@ from claude_launcher.wire import RouteError
 
 GOOD = {"sandbox_started": True, "tcp4_public": "blocked", "tcp6_public": "blocked",
         "udp4_public": "blocked", "loopback_other_port": "blocked",
-        "loopback_proxy_port": "connected", "keychain_tool": "blocked",
+        "loopback_proxy_port": "connected", "loopback_proxy_ipv6": "blocked", "keychain_tool": "blocked",
+        "tcp4_public_proxy_port": "blocked",
         "open_tool": "blocked", "ssh_directory": "blocked", "udp_proxy_port": "blocked",
         "host_file_read": "blocked", "host_file_write": "blocked", "host_signal": "blocked",
         "launchservices": "blocked", "securityd": "blocked", "trustd": "blocked"}
@@ -59,7 +60,7 @@ class SeatbeltProfileTests(unittest.TestCase):
         lines = profile.splitlines()
         self.assertEqual(lines[:2], ["(version 1)", "(deny default)"])
         outbound = [line for line in lines if "network-outbound" in line]
-        self.assertEqual(outbound, ['(allow network-outbound (remote tcp "localhost:43210"))'])
+        self.assertEqual(outbound, ['(allow network-outbound (remote tcp4 "localhost:43210"))'])
         self.assertIn('(subpath "/Users/a/we\\"ird\\\\name")', profile)
         deny = profile.index("(deny file-read-data file-read-xattr file-write*")
         allow = profile.index('(allow file-read* file-write* (subpath '
@@ -74,6 +75,25 @@ class SeatbeltProfileTests(unittest.TestCase):
     def test_control_characters_are_rejected(self):
         with self.assertRaisesRegex(RouteError, "path_unsupported_by_macos_sandbox"):
             macos.seatbelt_profile(1, Path("/Users/a/p"), [Path("/Users/a/x\ny")])
+
+    def test_extra_roots_resolve_aliases_and_refuse_private_or_broad_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve()
+            project, private = home / "project", home / ".ssh"
+            project.mkdir()
+            private.mkdir()
+            alias = home / "alias"
+            alias.symlink_to(project)
+            with patch("claude_launcher.macos.Path.home", return_value=home):
+                self.assertEqual(macos.validated_allowed_roots((str(alias),), [private]),
+                                 (project,))
+                for path in (home, home.parent, private, home / "missing"):
+                    with self.assertRaises(RouteError):
+                        macos.validated_allowed_roots((str(path),), [private])
+                alias.unlink()
+                alias.symlink_to(private)
+                with self.assertRaises(RouteError):
+                    macos.validated_allowed_roots((str(alias),), [private])
 
     def test_private_paths_cover_credentials_links_proxy_clients_and_config_entries(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -182,7 +202,8 @@ class SeatbeltSessionTests(unittest.TestCase):
 
         threading.Thread(target=echo, daemon=True).start()
         with patch.dict(os.environ, {"PATH": "/opt/homebrew/bin:relative:/usr/bin",
-                                     "ANTHROPIC_API_KEY": "secret", "TMPDIR": "/var/tmp/x/"}), \
+                                     "ANTHROPIC_API_KEY": "secret", "TMPDIR": "/var/tmp/x/",
+                                     "CLAUDE_CODE_TMPDIR": "/tmp/untrusted-host"}), \
                 patch("claude_launcher.macos.run_self_check", return_value=GOOD) as check, \
                 macos.seatbelt_session(upstream, self.profile, self.home / "project",
                                        ["/claude", "--flag"], timezone="UTC") as (args, env):
@@ -194,6 +215,7 @@ class SeatbeltSessionTests(unittest.TestCase):
             self.assertEqual(env["TZ"], "UTC")
             self.assertNotEqual(env["TMPDIR"], "/var/tmp/x/")
             self.assertTrue(Path(env["TMPDIR"]).is_dir())
+            self.assertEqual(Path(env["CLAUDE_CODE_TMPDIR"]), Path(env["TMPDIR"]))
             self.assertEqual(env["PATH"], f"{self.profile}/.local/bin:/opt/homebrew/bin:/usr/bin")
             self.assertNotIn("ANTHROPIC_API_KEY", env)
             self.assertEqual(args[:6], ["/bin/sh", "-c", 'cd -- "$1" && shift && exec "$@"',
@@ -203,7 +225,7 @@ class SeatbeltSessionTests(unittest.TestCase):
             self.assertEqual(args[8:], ["/claude", "--flag"])
             profile = args[7]
             self.assertEqual(check.call_args.args[:2], (profile, port))
-            self.assertIn(f'(remote tcp "localhost:{port}")', profile)
+            self.assertIn(f'(remote tcp4 "localhost:{port}")', profile)
             self.assertIn(f'(subpath "{self.home}/.ssh")', profile)
             with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
                 client.sendall(b"connect")
@@ -362,7 +384,7 @@ class MacCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory).resolve()
             config = Config("203.0.113.1", "fixture", 22, home / "key", home / "hosts",
-                            "/unused", texlive_root=None)
+                            "/unused", texlive_root=None, macos_allowed_roots=(str(home / "work"),))
             sessions = []
 
             @contextlib.contextmanager
@@ -383,6 +405,7 @@ class MacCliTests(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(cli.launch(config, config.profile_home, [], install=True), 0)
                 self.assertEqual(sessions[-1][0], macos.INSTALL_COMMAND)
+                self.assertEqual(sessions[-1][1]["allowed_roots"], ())
                 self.assertEqual(sessions[-1][1]["protected_files"],
                                  (config.identity_file, config.known_hosts))
                 namespace.assert_not_called()
@@ -397,10 +420,12 @@ class MacCliTests(unittest.TestCase):
                 credentials.parent.mkdir()
                 credentials.write_text("{}")
                 self.assertEqual(cli.launch(config, workspace, ["auth", "login"], login=True), 0)
+                self.assertEqual(sessions[-1][1]["allowed_roots"], ())
                 from claude_launcher.token_auth import save_token, remove_token
                 token = "sk-ant-oat01-" + "synthetic_" * 8
                 save_token(config.profile_home, token)
                 self.assertEqual(cli.launch(config, workspace, [], safe_mode=True), 0)
+                self.assertEqual(sessions[-1][1]["allowed_roots"], config.macos_allowed_roots)
                 self.assertEqual(supervised.call_args.args[1]["CLAUDE_CODE_OAUTH_TOKEN"], token)
                 self.assertNotIn(token, repr(supervised.call_args.args[0]))
                 with self.assertRaisesRegex(RouteError, "imported_token_present"):

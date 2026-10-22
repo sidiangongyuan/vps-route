@@ -6,6 +6,8 @@ import json
 import pty
 import select
 import signal
+import subprocess
+import sys
 import tempfile
 import termios
 import threading
@@ -24,6 +26,284 @@ from claude_launcher.wire import RouteError
 
 
 class RuntimePolicyTests(unittest.TestCase):
+    def test_child_exit_stops_checks_while_final_output_is_blocked(self):
+        script = r'''
+import os, sys, threading
+from unittest.mock import patch
+from claude_launcher.runner import run_supervised
+input_reader, input_writer = os.pipe()
+output_reader, output_writer = os.pipe()
+os.set_blocking(output_writer, False)
+while True:
+    try: os.write(output_writer, b'x' * 4096)
+    except BlockingIOError: break
+os.set_blocking(output_writer, True)
+reaped = threading.Event()
+checked = threading.Event()
+waitpid = os.waitpid
+def observe(*args):
+    result = waitpid(*args)
+    if result[0]: reaped.set()
+    return result
+def check():
+    reaped.wait(timeout=3)
+    checked.set()
+    return 'connectivity_check_failed'
+try:
+    with patch('claude_launcher.runner.os.waitpid', side_effect=observe):
+        result = run_supervised(
+            [sys.executable, '-c', 'import time; time.sleep(0.2); print("done")'],
+            dict(os.environ), check, lambda: None, lambda: True, 0.01,
+            input_fd=input_reader, output_fd=output_writer,
+        )
+    assert checked.is_set() and reaped.is_set()
+    assert result == (0, 'child_exited'), result
+finally:
+    for fd in (input_reader, input_writer, output_reader, output_writer): os.close(fd)
+'''
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True,
+                                text=True, timeout=8)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_launcher_finishes_when_exit_notice_reader_stops(self):
+        script = r'''
+import contextlib, os, pty, sys, tempfile, termios
+from pathlib import Path
+from unittest.mock import Mock, patch
+from claude_launcher import cli
+from claude_launcher.config import Config
+from claude_launcher.wire import RouteError
+for pipe in (False, True):
+    master, slave = pty.openpty()
+    original = termios.tcgetattr(slave)
+    reader, writer = os.pipe() if pipe else (master, slave)
+    os.set_blocking(writer, False)
+    while True:
+        try: os.write(writer, b'x' * 4096)
+        except BlockingIOError: break
+    os.set_blocking(writer, True)
+    with tempfile.TemporaryDirectory() as directory, \
+            os.fdopen(os.dup(slave), 'r') as input_stream, \
+            os.fdopen(os.dup(writer), 'w', buffering=1) as output_stream:
+        home = Path(directory).resolve()
+        config = Config('203.0.113.1', 'fixture', 22, home/'key', home/'hosts',
+                        '/unused', '203.0.113.2', 'US')
+        with patch.object(cli.Path, 'home', return_value=home):
+            config.profile_home.mkdir(parents=True, mode=0o700)
+            config.claude_executable.parent.mkdir(parents=True)
+            config.claude_executable.touch(mode=0o700)
+            with patch.object(sys, 'stdin', input_stream), \
+                    patch.object(sys, 'stdout', output_stream), \
+                    patch.object(cli, 'MACOS', False), \
+                    patch.object(cli, 'namespace_available', return_value=True), \
+                    patch.object(cli, 'system_python_compatible', return_value=True), \
+                    patch.object(cli, 'SSHTunnel'), \
+                    patch.object(cli, 'connectivity_check', return_value=None), \
+                    patch.object(cli, '_isolated', return_value=contextlib.nullcontext(
+                        (['/bin/echo', 'final output'], dict(os.environ)))), \
+                    patch.object(cli, 'receipt'):
+                assert cli._launch(config, home, ['--version'], Mock(operation='version')) == 0
+                with patch.object(cli.Config, 'load', side_effect=RouteError('fixture_failure')), \
+                        patch.object(sys, 'argv', ['vps-route', 'run']):
+                    assert cli.main() == 69
+            assert termios.tcgetattr(slave) == original
+            assert os.get_blocking(writer)
+    if pipe: os.close(reader); os.close(writer)
+    os.close(slave); os.close(master)
+'''
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True,
+                                text=True, timeout=12)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_large_redirected_output_is_complete(self):
+        reader, writer = os.pipe()  # Keep stdin open without injecting PTY EOF echo.
+        self.addCleanup(os.close, reader)
+        self.addCleanup(os.close, writer)
+        with tempfile.TemporaryFile() as output:
+            result = run_supervised(
+                [sys.executable, '-c', 'import os; os.write(1, b"x" * 1048576)'],
+                dict(os.environ), None, lambda: None, lambda: True, 1,
+                input_fd=reader, output_fd=output.fileno(),
+            )
+            self.assertEqual(result, (0, 'child_exited'))
+            output.seek(0)
+            self.assertEqual(output.read(), b'x' * 1048576)
+
+    def test_slow_output_reader_receives_complete_output_after_child_exit(self):
+        script = r'''
+import os, sys, threading, time
+from claude_launcher.runner import run_supervised
+input_reader, input_writer = os.pipe()
+output_reader, output_writer = os.pipe()
+received = bytearray()
+def read_slowly():
+    while True:
+        data = os.read(output_reader, 4096)
+        if not data: return
+        received.extend(data)
+        time.sleep(0.12)
+reader = threading.Thread(target=read_slowly, daemon=True)
+reader.start()
+try:
+    result = run_supervised(
+        [sys.executable, '-c', 'import os; os.write(1, b"x" * 131072)'],
+        dict(os.environ), None, lambda: None, lambda: True, 1,
+        input_fd=input_reader, output_fd=output_writer,
+    )
+finally:
+    os.close(output_writer)
+    os.close(input_reader); os.close(input_writer)
+reader.join(timeout=6)
+os.close(output_reader)
+assert not reader.is_alive()
+assert result == (0, 'child_exited'), result
+assert received == b'x' * 131072, len(received)
+'''
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True,
+                                text=True, timeout=12)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_full_child_input_still_handles_route_loss_and_launcher_interrupt(self):
+        script = r'''
+import os, signal, subprocess, sys, tempfile, threading, time
+from claude_launcher.runner import run_supervised
+for interrupted in (False, True):
+    with tempfile.TemporaryFile() as input_file, tempfile.TemporaryFile() as output:
+        input_file.write(b'x' * 1048576); input_file.seek(0)
+        started = time.monotonic()
+        closed = []
+        timer = threading.Timer(0.4, lambda: os.kill(os.getpid(), signal.SIGINT))
+        if interrupted: timer.start()
+        try:
+            result = run_supervised(
+                [sys.executable, '-c', 'import termios,tty,time; tty.setraw(0,termios.TCSANOW); time.sleep(30)'],
+                dict(os.environ), None, lambda: closed.append(time.monotonic()),
+                lambda: interrupted or time.monotonic()-started < 0.4, 1,
+                input_fd=input_file.fileno(), output_fd=output.fileno(),
+            )
+            assert result == (69, 'launcher_interrupted' if interrupted else 'ssh_tunnel_lost'), result
+            assert closed and closed[0]-started < 1.5
+            assert time.monotonic()-started < 3
+        finally:
+            timer.cancel()
+            if interrupted: timer.join()
+'''
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True,
+                                text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_full_terminal_still_handles_ctrl_c_and_route_loss(self):
+        script = r'''
+import os, pty, sys, termios, threading, time
+from claude_launcher.runner import run_supervised
+for lost in (False, True):
+    master, slave = pty.openpty()
+    original = termios.tcgetattr(slave)
+    os.set_blocking(slave, False)
+    while True:
+        try: os.write(slave, b'x' * 4096)
+        except BlockingIOError: break
+    os.set_blocking(slave, True)
+    timer = threading.Timer(0.4, lambda: os.write(master, b'\x03'))
+    started = time.monotonic()
+    closed = []
+    if not lost: timer.start()
+    try:
+        result = run_supervised(
+            [sys.executable, '-c', 'import os,time; os.write(1,b"x"*1048576); time.sleep(30)'],
+            dict(os.environ), None, lambda: closed.append(True),
+            lambda: not lost or time.monotonic()-started < 0.4, 1,
+            input_fd=slave, output_fd=slave,
+        )
+        assert result == ((69,'ssh_tunnel_lost') if lost else (130,'child_exited')), result
+        assert closed and time.monotonic()-started < 4
+        assert termios.tcgetattr(slave) == original
+    finally:
+        timer.cancel()
+        if not lost: timer.join()
+        os.close(slave); os.close(master)
+'''
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True,
+                                text=True, timeout=12)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_cleanup_returns_when_terminal_or_pipe_reader_stops(self):
+        # A separate process bounds the regression even if a kernel tty wait
+        # blocks Python's signal handler. All descriptors belong to this test.
+        script = r'''
+import fcntl, os, pty, select, termios, time, tty
+from claude_launcher.runner import _restore_terminal, TERMINAL_RESET, run_supervised
+for full in (False, True):
+    master, slave = pty.openpty()
+    original = termios.tcgetattr(slave)
+    flags = fcntl.fcntl(slave, fcntl.F_GETFL)
+    tty.setraw(slave, termios.TCSANOW)
+    os.write(slave, b'queued output')
+    if full:
+        os.set_blocking(slave, False)
+        while True:
+            try: os.write(slave, b'x' * 4096)
+            except BlockingIOError: break
+        fcntl.fcntl(slave, fcntl.F_SETFL, flags)
+    flags = fcntl.fcntl(slave, fcntl.F_GETFL)
+    started = time.monotonic()
+    _restore_terminal(slave, slave, original)
+    assert time.monotonic() - started < 2
+    assert termios.tcgetattr(slave) == original
+    assert fcntl.fcntl(slave, fcntl.F_GETFL) == flags
+    if not full:
+        assert TERMINAL_RESET in os.read(master, 65536)
+    os.close(slave); os.close(master)
+
+reader, writer = os.pipe()
+flags = fcntl.fcntl(writer, fcntl.F_GETFL)
+os.set_blocking(writer, False)
+while True:
+    try: os.write(writer, b'x' * 4096)
+    except BlockingIOError: break
+fcntl.fcntl(writer, fcntl.F_SETFL, flags)
+flags = fcntl.fcntl(writer, fcntl.F_GETFL)
+started = time.monotonic()
+_restore_terminal(reader, writer, None, rendered_tui=True)
+assert time.monotonic() - started < 1
+assert fcntl.fcntl(writer, fcntl.F_GETFL) == flags
+os.close(reader); os.close(writer)
+
+# Exercise startup and normal exit while the terminal reader is stopped.
+master, slave = pty.openpty()
+original = termios.tcgetattr(slave)
+os.set_blocking(slave, False)
+while True:
+    try: os.write(slave, b'x' * 4096)
+    except BlockingIOError: break
+os.set_blocking(slave, True)
+closed = []
+result = run_supervised(['/bin/echo', 'final output'], dict(os.environ), None,
+                       lambda: closed.append(True), lambda: True, 1,
+                       input_fd=slave, output_fd=slave)
+assert result == (0, 'child_exited') and closed
+assert termios.tcgetattr(slave) == original
+os.close(slave); os.close(master)
+
+# The same backpressure can occur on redirected stdout without any termios.
+reader, writer = os.pipe()
+os.set_blocking(writer, False)
+while True:
+    try: os.write(writer, b'x' * 4096)
+    except BlockingIOError: break
+os.set_blocking(writer, True)
+with open(os.devnull, 'rb') as empty:
+    result = run_supervised(['/bin/echo', 'final output'], dict(os.environ), None,
+                           lambda: None, lambda: True, 1,
+                           input_fd=empty.fileno(), output_fd=writer)
+    assert result == (0, 'child_exited')
+assert os.get_blocking(writer)
+os.close(reader); os.close(writer)
+'''
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True,
+                                text=True, timeout=12)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_forced_exit_resets_emulator_even_when_relay_exposes_pipes(self):
         with open(os.devnull, "rb") as empty, tempfile.TemporaryFile() as output:
             started = time.monotonic()
@@ -202,12 +482,15 @@ class RuntimePolicyTests(unittest.TestCase):
             os.close(slave)
             os.close(master)
 
-    def test_launch_checks_each_new_route_and_enables_runtime_monitor(self):
+    @patch("claude_launcher.cli.MACOS", False)
+    @patch("claude_launcher.cli.system_python_compatible", return_value=True)
+    def test_launch_checks_each_new_route_and_enables_runtime_monitor(self, _python):
         with tempfile.TemporaryDirectory() as directory:
-            home = Path(directory)
+            home = Path(directory).resolve()
             config = Config("203.0.113.1", "fixture", 22, home / "key", home / "hosts",
                             "/unused", "203.0.113.2", "US")
             with patch("claude_launcher.cli.Path.home", return_value=home):
+                config.profile_home.mkdir(parents=True, mode=0o700)
                 executable = config.claude_executable
                 executable.parent.mkdir(parents=True)
                 executable.touch(mode=0o700)
@@ -289,7 +572,7 @@ class RuntimePolicyTests(unittest.TestCase):
             "remote_socket": "/unused", "expected_ip": "8.8.8.8", "expected_country": "US",
         }
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "config.json"
+            path = Path(directory).resolve() / "config.json"
             path.write_text(json.dumps(values))
             config = Config.load(path)
             self.assertIsNone(config.expected_ip)
@@ -314,9 +597,10 @@ class RuntimePolicyTests(unittest.TestCase):
                     with self.assertRaisesRegex(RouteError, "invalid_or_unreadable_config"):
                         Config.load(path)
 
+    @patch("claude_launcher.cli.MACOS", False)
     def test_namespace_failure_is_logged_before_any_ssh_connection(self):
         with tempfile.TemporaryDirectory() as directory:
-            home = Path(directory)
+            home = Path(directory).resolve()
             config = Config("203.0.113.1", "fixture", 22, home / "key", home / "hosts",
                             "/unused", "203.0.113.2", "US")
             with patch.object(Path, "home", return_value=home), \

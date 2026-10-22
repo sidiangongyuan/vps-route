@@ -18,7 +18,7 @@ from claude_launcher.wire import RouteError
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="lifecycle-fixture-")
-        self.home = Path(self.temporary.name)
+        self.home = Path(self.temporary.name).resolve()
         self.addCleanup(self.temporary.cleanup)
         self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)

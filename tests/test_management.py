@@ -14,7 +14,7 @@ from claude_launcher.wire import RouteError
 class ManagementTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.path = self.root / "config.json"
         self.values = {
             "ssh_host": "203.0.113.1", "ssh_user": "fixture", "ssh_port": 22,
@@ -54,10 +54,20 @@ class ManagementTests(unittest.TestCase):
                           ("timeout_seconds", "null"), ("timezone", "Unknown/Zone"),
                           ("probe_url", "12"), ("ssh_host", "1"),
                           ("ssh_http_proxy", "12"),
+                          ("macos_allowed_roots", '["relative"]'),
+                          ("macos_allowed_roots", '["/tmp/../"]'),
+                          ("macos_allowed_roots", '"not-a-list"'),
                           ("unknown", "value"), ("ssh_http_proxy", "http://evil:8080")]:
             with self.subTest(key=key, text=text), self.assertRaises(RouteError):
                 set_config(self.path, key, text, apply=True)
             self.assertEqual(self.path.read_bytes(), before)
+
+    def test_macos_allowed_roots_round_trip(self):
+        roots = [str(self.root / "work"), str(self.root / "misc")]
+        set_config(self.path, "macos_allowed_roots", json.dumps(roots), apply=True)
+        config = Config.load(self.path)
+        self.assertEqual(config.macos_allowed_roots, tuple(roots))
+        self.assertEqual(config_values(config)["macos_allowed_roots"], "xxx")
 
     def test_symlink_hardlink_shared_file_and_parent_are_refused(self):
         linked = self.root / "linked.json"

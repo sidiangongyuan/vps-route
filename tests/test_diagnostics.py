@@ -103,12 +103,13 @@ class DiagnosticTests(unittest.TestCase):
             self.assertIsNone(result["observed_exit_ip"])
             self.assertEqual(result["exit_info_result"], "unavailable")
 
-    def test_doctor_report_is_private_and_does_not_read_account_settings(self):
+    @patch.object(cli, "MACOS", False)
+    def test_linux_doctor_report_is_private_and_does_not_read_account_settings(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(
             cli, "namespace_available", return_value=True,
         ), patch.object(cli, "system_python_compatible", return_value=True), \
                 contextlib.redirect_stdout(io.StringIO()):
-            path = Path(temporary) / "report.json"
+            path = Path(temporary).resolve() / "report.json"
             self.assertEqual(cli.doctor(None, False, report=path), 0)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             result = json.loads(path.read_text())

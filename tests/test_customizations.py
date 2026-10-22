@@ -1,5 +1,6 @@
 import json
 import unittest
+import sys
 import tempfile
 import subprocess
 from pathlib import Path
@@ -14,7 +15,7 @@ from claude_launcher.wire import RouteError
 class CustomizationTests(unittest.TestCase):
     def test_shared_skills_keep_private_priority_and_reject_external_links(self):
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            home = Path(temporary).resolve()
             profile = home / "profile"
             private = profile / ".claude/skills"
             universal = home / ".agents/skills"
@@ -44,10 +45,11 @@ class CustomizationTests(unittest.TestCase):
             self.assertNotIn(str(bundled), mounts)
             self.assertNotIn(str(universal / "synced"), mounts)
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_real_shared_skills_are_readonly_and_future_installs_are_discovered(self):
         from claude_launcher.runner import sandbox_command
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            home = Path(temporary).resolve()
             profile = home / ".local/share/claude-launcher/profiles/fixture"
             profile.mkdir(parents=True)
             project = home / "project"
@@ -92,7 +94,10 @@ assert len(Path('/proc/net/route').read_text().splitlines()) == 1
     def test_user_only_skills_without_project_integrations(self):
         args = skills_arguments(["--model", "sonnet"])
         self.assertEqual(args[:2], ["--setting-sources", "user,project,local"])
-        self.assertEqual(json.loads(args[args.index("--settings") + 1]), SKILL_SETTINGS)
+        expected = dict(SKILL_SETTINGS)
+        if sys.platform == "darwin":
+            expected["sandbox"] = {"enabled": False}
+        self.assertEqual(json.loads(args[args.index("--settings") + 1]), expected)
         self.assertIn("--strict-mcp-config", args)
         self.assertEqual(json.loads(args[args.index("--mcp-config") + 1]), {"mcpServers": {}})
         self.assertNotIn("--safe-mode", args)
@@ -117,7 +122,7 @@ assert len(Path('/proc/net/route').read_text().splitlines()) == 1
 
     def test_project_view_keeps_rules_but_not_settings_skills_agents(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             local = root / ".claude"
             local.mkdir()
             for name in ("rules", "agents", "skills"):
@@ -134,10 +139,11 @@ assert len(Path('/proc/net/route').read_text().splitlines()) == 1
             self.assertNotIn(str(local / "skills"), args)
             self.assertEqual(settings.read_text(), '{"env":{"HTTPS_PROXY":"old"}}')
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_real_project_view_hides_settings_and_preserves_instruction_files(self):
         from claude_launcher.runner import sandbox_command
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             profile = root / "profile"
             profile.mkdir()
             project = root / "project"

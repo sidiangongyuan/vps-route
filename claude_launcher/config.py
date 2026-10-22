@@ -41,6 +41,8 @@ class Config:
     )
     # Extra HOME entry names or fnmatch patterns hidden when research_filesystem is on.
     private_home_entries: tuple[str, ...] = ()
+    # Extra read/write roots for macOS run sessions only; no network permissions.
+    macos_allowed_roots: tuple[str, ...] = ()
 
     @property
     def profile_home(self) -> Path:
@@ -84,6 +86,15 @@ class Config:
                             or any(ord(char) < 32 for char in entry)):
                         raise ValueError
                 values["private_home_entries"] = tuple(entries)
+            if "macos_allowed_roots" in values:
+                roots = values["macos_allowed_roots"]
+                if not isinstance(roots, (list, tuple)) or len(roots) > 16:
+                    raise ValueError
+                for root in roots:
+                    if (not isinstance(root, str) or not Path(root).is_absolute()
+                            or ".." in Path(root).parts or any(ord(c) < 32 for c in root)):
+                        raise ValueError
+                values["macos_allowed_roots"] = tuple(roots)
             values["identity_file"] = Path(values["identity_file"]).expanduser().absolute()
             values["known_hosts"] = Path(values["known_hosts"]).expanduser().absolute()
             if values.get("texlive_root") is not None:

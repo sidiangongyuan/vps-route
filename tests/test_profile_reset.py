@@ -15,7 +15,7 @@ from claude_launcher.wire import RouteError
 class ProfileResetTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="full-reset-fixture-")
-        self.home = Path(self.temporary.name)
+        self.home = Path(self.temporary.name).resolve()
         self.profile = self.home / ".local/share/claude-launcher/profiles/fixture"
         self.profile.mkdir(parents=True)
         (self.profile / ".claude").mkdir()

@@ -144,6 +144,7 @@ class RecoveryTests(unittest.TestCase):
                 close()
                 tunnel._errors.close()
 
+    @unittest.skipUnless(os.uname().sysname == "Linux", "requires Linux network namespaces")
     def test_existing_namespace_sees_replaced_socket_without_direct_route(self):
         class Echo(socketserver.BaseRequestHandler):
             def handle(self):

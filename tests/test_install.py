@@ -18,7 +18,7 @@ class InstallTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="install-state-fixture-")
         self.addCleanup(temporary.cleanup)
-        self.home = Path(temporary.name)
+        self.home = Path(temporary.name).resolve()
         home = patch.object(Path, "home", return_value=self.home)
         home.start()
         self.addCleanup(home.stop)
@@ -111,7 +111,7 @@ class InstallTests(unittest.TestCase):
 
     def test_official_installer_uses_latest_channel(self):
         with tempfile.TemporaryDirectory(prefix="install-fixture-") as directory, \
-             patch.object(Path, "home", return_value=Path(directory)), \
+             patch.object(Path, "home", return_value=Path(directory).resolve()), \
              patch.object(install.subprocess, "run", return_value=SimpleNamespace(returncode=0)), \
              patch.object(install.subprocess, "call", return_value=0) as call:
             self.assertEqual(install.main(), 0)
@@ -119,7 +119,7 @@ class InstallTests(unittest.TestCase):
 
     def test_failed_download_never_executes_installer(self):
         with tempfile.TemporaryDirectory(prefix="install-fixture-") as directory, \
-             patch.object(Path, "home", return_value=Path(directory)), \
+             patch.object(Path, "home", return_value=Path(directory).resolve()), \
              patch.object(install.subprocess, "run", return_value=SimpleNamespace(returncode=22)), \
              patch.object(install.subprocess, "call") as call:
             self.assertEqual(install.main(), 22)

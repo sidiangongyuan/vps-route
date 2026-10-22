@@ -6,6 +6,7 @@ import platform
 import subprocess
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 
 from claude_launcher.config import Config
@@ -16,7 +17,7 @@ from claude_launcher.wire import RouteError
 class TexLiveTests(unittest.TestCase):
     def test_config_parses_optional_installation_path(self):
         with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / "config.json"
+            config = Path(directory).resolve() / "config.json"
             values = dict(ssh_host="203.0.113.1", ssh_user="fixture", ssh_port=22,
                           identity_file="/unused", known_hosts="/unused",
                           remote_socket="/unused", expected_ip="8.8.8.8",
@@ -26,7 +27,7 @@ class TexLiveTests(unittest.TestCase):
 
     def test_mount_is_opt_in_and_does_not_expose_whole_home(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             profile, workspace = root / "profile", root / "project"
             profile.mkdir()
             workspace.mkdir()
@@ -55,10 +56,11 @@ class TexLiveTests(unittest.TestCase):
 
     @unittest.skipUnless(os.environ.get("VPS_ROUTE_TEST_TEXLIVE_ROOT"),
                          "set VPS_ROUTE_TEST_TEXLIVE_ROOT for a local compilation smoke")
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_real_tex_compiles_in_isolation_and_project_outputs_persist(self):
         tex = Path(os.environ["VPS_ROUTE_TEST_TEXLIVE_ROOT"]).resolve()
         with tempfile.TemporaryDirectory(prefix="vps-route-tex-") as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             profile, project = root / "profile", root / "project"
             profile.mkdir()
             project.mkdir()

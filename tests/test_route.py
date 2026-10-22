@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -47,8 +48,9 @@ class JsonHandler(http.server.BaseHTTPRequestHandler):
 class RouteIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temporary = tempfile.TemporaryDirectory(prefix="claude-launcher-fixture-")
-        cls.root = Path(cls.temporary.name)
+        # macOS's default TMPDIR is long; sockaddr_un has a small path limit.
+        cls.temporary = tempfile.TemporaryDirectory(prefix="route-fixture-", dir="/tmp")
+        cls.root = Path(cls.temporary.name).resolve()
         cls.cert = cls.root / "cert.pem"
         key = cls.root / "key.pem"
         subprocess.run([
@@ -110,6 +112,7 @@ class RouteIntegration(unittest.TestCase):
             reading = proxy_json(str(self.socket_path), "https://probe.test/json", context=self.context)
         self.assertEqual(reading, {"ip": "203.0.113.7", "country": "US"})
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_02_namespace_proxy_works_and_direct_route_does_not(self):
         with patch("claude_launcher.remote.public_target", self.local_target), patch.dict(
             os.environ,
@@ -123,6 +126,7 @@ class RouteIntegration(unittest.TestCase):
         self.assertIn("ISOLATED_PROXY_OK", text)
         self.assertTrue((self.root / "profile-network/synthetic-state").is_file())
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_03_failed_check_terminates_owned_descendants_only(self):
         marker = self.root / "surviving-child"
         ready = self.root / "owned-child-ready"
@@ -147,6 +151,7 @@ class RouteIntegration(unittest.TestCase):
         with self.assertRaises(RouteError):
             public_target("127.0.0.1:22")
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_repeated_upstream_failure_stops_owned_tree_even_while_ssh_is_alive(self):
         marker = self.root / "upstream-surviving-child"
         ready = self.root / "upstream-owned-child-ready"
@@ -198,6 +203,7 @@ class RouteIntegration(unittest.TestCase):
                    side_effect=RouteError("proxy_socket_unavailable")):
             self.assertEqual(connectivity_check(cfg, self.socket_path), "proxy_socket_unavailable")
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_07_native_symlink_update_inside_separate_profile(self):
         profile = self.root / "profile-update"
         version = profile / ".local/share/claude/versions/fixture-v1"
@@ -222,6 +228,7 @@ class RouteIntegration(unittest.TestCase):
             self.assertEqual(result, (0, "child_exited"), text)
             self.assertIn(expected, text)
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_08_lost_transport_stops_child_without_waiting_for_probe(self):
         profile = self.root / "profile-transport-loss"
         profile.mkdir()
@@ -269,7 +276,7 @@ class RouteIntegration(unittest.TestCase):
         path = private / "connect.sock"
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stale:
             stale.bind(str(path))
-        command = ["/usr/bin/python3", "-m", "claude_launcher.remote", "--socket", str(path)]
+        command = [sys.executable, "-m", "claude_launcher.remote", "--socket", str(path)]
         service = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE,
                                    stderr=subprocess.DEVNULL)
         try:
@@ -291,6 +298,7 @@ class RouteIntegration(unittest.TestCase):
         self.assertEqual(service.returncode, 0)
         self.assertFalse(path.exists())
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_11_child_uses_host_timezone_not_inherited_tz(self):
         profile = self.root / "profile-timezone"
         profile.mkdir(mode=0o700)
@@ -322,6 +330,7 @@ class RouteIntegration(unittest.TestCase):
         with self.assertRaisesRegex(RouteError, "account_or_key_directory"):
             sandbox_command(self.socket_path, profile, workspace, ["/bin/true"])
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux network namespaces")
     def test_explicit_process_timezone_does_not_change_system_timezone_files(self):
         profile = self.root / "profile-explicit-timezone"
         profile.mkdir(mode=0o700)
