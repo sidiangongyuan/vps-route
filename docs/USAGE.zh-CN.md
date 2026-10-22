@@ -9,6 +9,9 @@ macOS 为实验性支持，原生隔离已做本地测试，真实账号和 VPS 
 
 ## 1. 安装工具
 
+macOS 请按 [macOS 说明](MACOS.zh-CN.md) 安装 `macos-support` 分支。
+以下安装步骤适用于 Linux。
+
 客户端需要 Python 3.10+（包含 `/usr/bin/python3`）、bubblewrap、OpenSSH、curl、
 Bash；VPS 需要系统 Python 3.10+、systemd、SSH 密钥登录和外网访问。
 客户端必须支持非特权网络命名空间，否则工具会拒绝启动。
@@ -134,6 +137,9 @@ SSH 重连成功不代表上游/API 已恢复，实际请求结果由 Claude 展
 更多边界见 [安全说明](SECURITY.md)。
 
 ## 5. 更新工具
+
+macOS 分支按 [macOS 更新步骤](MACOS.zh-CN.md#更新本工具) 更新。
+下方 `self-update` 安装正式发布版本，不跟踪 `macos-support`。
 
 `vps-route update` 更新的是 Claude。更新 VPS Route 本身用 `self-update`，
 需先关闭它启动的所有会话。默认只预览，加 `--apply` 才安装，只安装 GitHub 上正式发布的版本：

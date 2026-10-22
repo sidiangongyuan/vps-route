@@ -12,12 +12,15 @@ macOS 为实验性支持。隔离回归测试已在 macOS 27.0.1 上执行；这
 
 ## 安装
 
+macOS 版本在 `macos-support` 分支持续维护。安装时明确选择该分支：
+
 ```bash
 brew install pipx gh
 pipx ensurepath
 gh auth login
 gh auth setup-git
-# 在包含 macOS 实现的本地仓库中安装当前代码。
+git clone --branch macos-support https://github.com/sidiangongyuan/vps-route.git
+cd vps-route
 pipx install .
 ```
 
@@ -30,6 +33,18 @@ vps-route macos-check
 输出最后的 `"ready": true` 表示隔离自检通过。之后的配置和登录与 Linux 相同，
 见 [完整配置例子](FIRST_RUN.zh-CN.md)：`init`、`setup-vps --apply`、
 `doctor --connect`、`install`、`auth login`、`auth status --text`、`run`。
+
+## 更新本工具
+
+先退出所有 `vps-route` 会话，再从同一分支更新：
+
+```bash
+pipx install --force git+https://github.com/sidiangongyuan/vps-route.git@macos-support
+vps-route macos-check
+```
+
+`self-update` 安装 GitHub 正式发布版本，不跟踪 `macos-support`。使用本分支时，
+按上述命令更新工具。`vps-route update` 更新的是 profile 中的 Claude Code。
 
 ## 支持的命令
 

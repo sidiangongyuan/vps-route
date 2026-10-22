@@ -32,6 +32,9 @@ sudo apt-get install git gh python3 python3-venv pipx bubblewrap openssh-client 
 
 ## Install the tool
 
+On macOS, install the `macos-support` branch with the
+[macOS guide](docs/MACOS.zh-CN.md). The commands below install the default branch for Linux.
+
 The repository is private. Sign in with a GitHub account that has access and let
 git use that login, then install directly from GitHub (no clone needed):
 
@@ -130,6 +133,9 @@ lookup does not fail an otherwise successful connectivity check.
 Browsers and unrelated applications are not covered. See [Security](docs/SECURITY.md).
 
 ## Update or uninstall the tool
+
+For the macOS branch, use the [macOS update steps](docs/MACOS.zh-CN.md#更新本工具).
+`self-update` selects a published release; it does not track `macos-support`.
 
 Close active VPS Route sessions first. `self-update` previews by default and
 installs only a published GitHub release:

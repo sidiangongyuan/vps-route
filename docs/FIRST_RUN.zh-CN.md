@@ -1,8 +1,8 @@
 # 首次配置：完整例子
 
 以下 `xxx` 都是占位符，需换成自己的信息。除标注“在 VPS 上”的操作外，
-命令均在运行 Claude 的 Linux 机器执行。macOS 的安装步骤和差异见
-[macOS 说明](MACOS.zh-CN.md)，其余步骤相同。
+命令均在运行 Claude 的 Linux 机器执行。macOS 的安装和工具更新需选择
+`macos-support` 分支，见 [macOS 说明](MACOS.zh-CN.md)，其余步骤相同。
 
 ## 1. 准备什么
 
@@ -156,7 +156,7 @@ vps-route run
 | 找不到 `vps-route` | 执行 `pipx ensurepath` 后重新打开终端，或使用虚拟环境中的完整入口路径 |
 | `network_isolation_unavailable` | 先确认已安装 bubblewrap。Ubuntu 23.10/24.04 默认用 AppArmor 限制非特权用户命名空间，可能导致这个错误；本工具未在这些版本上验证。可请管理员为 `/usr/bin/bwrap` 添加允许 `userns` 的 AppArmor 配置后重试（这会放宽系统策略）。不要尝试绕过隔离检查 |
 | 在 Claude 里 `git push`、SSH 或 `http://` 失败 | 会话里只能访问公网 HTTPS（443）。这类命令请在普通终端执行 |
-| `self-update` 失败 | 先确认 `gh auth status` 正常、会话都已关闭；仍失败就执行 `pipx install --force git+https://github.com/sidiangongyuan/vps-route.git` 重装 |
+| `self-update` 失败 | macOS 按 [macOS 更新步骤](MACOS.zh-CN.md#更新本工具) 使用 `macos-support`；Linux 先确认 `gh auth status` 正常、会话都已关闭，仍失败就执行 `pipx install --force git+https://github.com/sidiangongyuan/vps-route.git` 重装 |
 | SSH 主机身份校验失败 | 向管理员核对主机指纹，不关闭身份校验 |
 | SSH 登录失败或超时 | 检查用户名、密钥、SSH 端口，以及配置的本机代理是否运行 |
 | 出口 IP 显示为空，但连通性正常 | IP 查询服务暂不可用，不影响使用；稍后重试 doctor |
