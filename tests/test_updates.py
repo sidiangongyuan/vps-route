@@ -31,12 +31,21 @@ class UpdateTests(unittest.TestCase):
             {"tag_name": "main", "draft": False, "prerelease": False},
             {"tag_name": "v1.0.0a1", "draft": False, "prerelease": False},
         ]:
-            with patch("claude_launcher.updates.shutil.which", return_value="gh"), \
-                    patch.object(updates, "_run", return_value=json.dumps(values)), \
+            with patch.object(updates, "_fetch_release", return_value=json.dumps(values)), \
                     self.assertRaisesRegex(RouteError, "no_valid_formal_release"):
                 updates.official_release()
         with self.assertRaisesRegex(RouteError, "formal_X_Y_Z"):
             updates.official_release("main")
+
+    def test_release_lookup_uses_public_api_without_github_cli(self):
+        value = {"tag_name": "v1.2.3", "draft": False, "prerelease": False}
+        with patch.object(updates, "_fetch_release", return_value=json.dumps(value)) as fetch, \
+                patch("claude_launcher.updates.shutil.which", return_value=None):
+            self.assertEqual(updates.official_release()["tag"], "v1.2.3")
+        fetch.assert_called_once_with("repos/sidiangongyuan/vps-route/releases/latest")
+        with patch("claude_launcher.updates.urllib.request.urlopen", side_effect=OSError), \
+                self.assertRaisesRegex(RouteError, "formal_release_unavailable"):
+            updates.official_release("1.2.3")
 
     def test_preview_never_updates_or_reads_profile_state(self):
         release = {"version": "1.0.0", "tag": "v1.0.0"}
@@ -85,8 +94,8 @@ class UpdateTests(unittest.TestCase):
         real_run = updates._run
 
         def fake_download(command, **options):
-            if command[:3] == ["gh", "repo", "clone"]:
-                shutil.copytree(source, Path(command[4]))
+            if command[:2] == ["git", "clone"]:
+                shutil.copytree(source, Path(command[-1]))
                 return ""
             return real_run(command, **options)
 
@@ -173,8 +182,8 @@ class UpdateTests(unittest.TestCase):
         real_run = updates._run
 
         def fake_packages(command, **options):
-            if command[:3] == ["gh", "repo", "clone"]:
-                shutil.copytree(source, command[4])
+            if command[:2] == ["git", "clone"]:
+                shutil.copytree(source, command[-1])
             elif command[1:4] == ["-m", "pip", "wheel"]:
                 wheels = Path(command[-1])
                 wheels.mkdir()

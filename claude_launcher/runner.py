@@ -136,7 +136,6 @@ def clean_environment() -> dict[str, str]:
             name.lower() in PROXY_NAMES
             or name.startswith("ANTHROPIC_")
             or name.startswith("CLAUDE_")
-            or name.startswith("HICC_")
             or name in {
                 "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
                 "CLAUDE_CODE_USE_FOUNDRY", "SSH_AUTH_SOCK", "DBUS_SESSION_BUS_ADDRESS",
@@ -299,6 +298,7 @@ def sandbox_command(
     *, login: bool = False, project_instructions: bool = False,
     texlive_root: Path | None = None,
     research_filesystem: bool = False,
+    private_home_entries: tuple[str, ...] = (),
     timezone: str | None = None,
     reconnectable: bool = False,
     orca_access: OrcaAccess | None = None,
@@ -309,7 +309,7 @@ def sandbox_command(
     live_home = Path.home().resolve()
     if workspace == live_home or workspace in live_home.parents:
         raise RouteError("choose_a_project_directory_not_whole_home")
-    protected = (".claude", ".hicc", ".codex", ".ssh", ".local", ".config", ".cache")
+    protected = (".claude", ".codex", ".ssh", ".local", ".config", ".cache")
     private_workspace = (
         profile_home.parent == live_home / ".local/share/claude-launcher/profiles"
         and workspace in {profile_home / "auth-workspace", profile_home / "default-workspace"}
@@ -318,7 +318,8 @@ def sandbox_command(
         workspace.is_relative_to(live_home / name) for name in protected
     ):
         raise RouteError("account_or_key_directory_is_not_a_workspace")
-    hidden = private_paths(live_home, REPO_ROOT) if research_filesystem else []
+    hidden = (private_paths(live_home, REPO_ROOT, private_home_entries)
+              if research_filesystem else [])
     if not private_workspace and any(workspace.is_relative_to(p) for p in hidden):
         raise RouteError("account_or_key_directory_is_not_a_workspace")
     args = [

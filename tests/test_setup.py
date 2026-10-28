@@ -23,13 +23,9 @@ class SetupTests(unittest.TestCase):
         self.home = Path(self.temporary.name)
         self.home_patch = patch.object(Path, "home", return_value=self.home)
         self.home_patch.start()
-        self.process_patch = patch(
-            "claude_launcher.legacy_cutover._same_user_legacy_process_running", return_value=False,
-        )
         self.profile_patch = patch(
             "claude_launcher.profile_reset._profile_is_running", return_value=False,
         )
-        self.process_patch.start()
         self.profile_patch.start()
         self.key = self.home / "key"
         self.hosts = self.home / "known-hosts"
@@ -44,7 +40,6 @@ class SetupTests(unittest.TestCase):
         }))
 
     def tearDown(self):
-        self.process_patch.stop()
         self.profile_patch.stop()
         self.home_patch.stop()
         self.temporary.cleanup()
@@ -86,40 +81,45 @@ class SetupTests(unittest.TestCase):
         self.assertIsNone(config.timezone)
         self.assertFalse(config.research_filesystem)
 
-    def test_default_init_preserves_legacy_state_and_creates_private_profile(self):
+    def test_default_init_preserves_host_state_and_creates_private_profile(self):
         old = self.home / ".claude"
         old.mkdir()
         (old / "keep").write_text("synthetic old state")
-        hicc = self.home / ".hicc"
-        hicc.mkdir()
-        (hicc / "state").write_text("synthetic unrelated state")
-        with patch("claude_launcher.legacy_cutover._same_user_legacy_process_running",
-                   return_value=False), patch(
-                       "claude_launcher.profile_reset._profile_is_running", return_value=False):
-            config = initialize_config(default_config_path(), self.source, yes=True)
+        other = self.home / ".other-tool"
+        other.mkdir()
+        (other / "state").write_text("synthetic unrelated state")
+        config = initialize_config(default_config_path(), self.source, yes=True)
         self.assertEqual((old / "keep").read_text(), "synthetic old state")
         self.assertFalse((self.home / ".local/share/claude-launcher/legacy-archives").exists())
         self.assertEqual(list(config.profile_home.iterdir()), [])
         self.assertEqual(config.profile_home.stat().st_mode & 0o777, 0o700)
-        self.assertEqual((hicc / "state").read_text(), "synthetic unrelated state")
+        self.assertEqual((other / "state").read_text(), "synthetic unrelated state")
 
     def test_init_preview_does_not_create_config_or_profile(self):
         old = self.home / ".claude"
         old.mkdir()
-        with patch("claude_launcher.legacy_cutover._same_user_legacy_process_running",
-                   return_value=False), patch(
-                       "claude_launcher.profile_reset._profile_is_running", return_value=False):
-            initialize_config(default_config_path(), self.source, dry_run=True)
+        initialize_config(default_config_path(), self.source, dry_run=True)
         self.assertFalse(default_config_path().exists())
         self.assertFalse((self.home / ".config").exists())
         self.assertTrue(old.exists())
 
-    def test_init_can_reuse_environment_while_old_claude_is_running(self):
-        with patch("claude_launcher.legacy_cutover._same_user_legacy_process_running",
-                   return_value=True):
-            config = initialize_config(default_config_path(), self.source, yes=True)
-            self.assertEqual(initialize_config(default_config_path()), config)
+    def test_init_can_reuse_environment(self):
+        config = initialize_config(default_config_path(), self.source, yes=True)
+        self.assertEqual(initialize_config(default_config_path()), config)
         self.assertTrue(default_config_path().exists())
+
+    def test_private_home_entries_round_trip_and_reject_paths(self):
+        values = json.loads(self.source.read_text())
+        values["private_home_entries"] = [".mytool", "vpn-*"]
+        self.source.write_text(json.dumps(values))
+        config = initialize_config(default_config_path(), self.source)
+        self.assertEqual(config.private_home_entries, (".mytool", "vpn-*"))
+        stored = json.loads(default_config_path().read_text())
+        self.assertEqual(stored["private_home_entries"], [".mytool", "vpn-*"])
+        for invalid in (["../escape"], ["a/b"], [".."], [""], "not-a-list", [1]):
+            values["private_home_entries"] = invalid
+            with self.assertRaisesRegex(RouteError, "invalid_or_unreadable_config"):
+                Config.from_values(values)
 
     def test_second_config_reuses_profile_and_keeps_credentials_and_sessions(self):
         config = initialize_config(default_config_path(), self.source)

@@ -19,7 +19,6 @@ from .config import Config
 from .arguments import build_parser
 from .credentials import has_token, prompt_token, read_token, remove_token, store_token, token_status
 from .customizations import skills_arguments
-from .observe import observe_hicc
 from .profile_reset import full_reset_inventory, reset_local_state, reset_profile
 from .onboarding import complete_authenticated_onboarding
 from .orca_access import prepare_orca_access
@@ -53,8 +52,7 @@ def namespace_available() -> bool:
         return False
 
 
-def doctor(config: Config | None, connect: bool, hicc: bool = False,
-           report: Path | None = None) -> int:
+def doctor(config: Config | None, connect: bool, report: Path | None = None) -> int:
     checks = {
         "ssh_installed": shutil.which("ssh") is not None,
         "system_python_compatible": system_python_compatible(),
@@ -103,8 +101,6 @@ def doctor(config: Config | None, connect: bool, hicc: bool = False,
             "runtime_probe_interval_seconds": config.runtime_probe_interval_seconds,
             "runtime_probe_failures": config.runtime_probe_failures,
         })
-    if hicc:
-        checks["hicc_passive_snapshot"] = observe_hicc()
     ready = all(checks[name] for name in ("ssh_installed", "private_network_namespace",
                                         "system_python_compatible", "curl_installed",
                                         "bash_installed"))
@@ -120,8 +116,6 @@ def doctor(config: Config | None, connect: bool, hicc: bool = False,
                           route_result="local_dependencies_unavailable",
                           diagnosis=connection_diagnosis("local_dependencies_unavailable", []))
     if report is not None:
-        if hicc:
-            raise RouteError("support_report_cannot_include_hicc_observation")
         from .management import private_json
 
         private_json(report.expanduser().absolute(), checks)
@@ -190,7 +184,7 @@ def launch(config: Config, workspace: Path, arguments: list[str], install: bool 
             audit.write("exit")
         except (OSError, RouteError):
             # Never hide a route failure or change the completed child's result.
-            print("claude-launcher: usage_log_write_failed", file=sys.stderr)
+            print("vps-route: usage_log_write_failed", file=sys.stderr)
 
 
 def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditLog,
@@ -257,6 +251,7 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                 login=login, project_instructions=skills_mode,
                 texlive_root=config.texlive_root,
                 research_filesystem=config.research_filesystem,
+                private_home_entries=config.private_home_entries,
                 timezone=config.timezone,
                 reconnectable=keep_session,
                 orca_access=orca_access,
@@ -313,7 +308,7 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
             tunnel.dispose()
             audit.exit_code, audit.reason = code, reason
             receipt(profile_home, code, reason)
-    print(f"\nclaude-launcher: {reason}; exit={code}")
+    print(f"\nvps-route: {reason}; exit={code}")
     return code
 
 
@@ -338,6 +333,7 @@ def network_test(config: Config) -> int:
                 ["/usr/bin/python3", str(ENTRY_DIR / "network_test_entry.py"),
                  *config.connectivity_urls],
                 research_filesystem=config.research_filesystem,
+                private_home_entries=config.private_home_entries,
                 timezone=config.timezone,
             )
             code, reason = run_supervised(
@@ -468,26 +464,7 @@ def main() -> int:
         path = args.config or default_config_path()
         config = Config.load(path) if args.config or path.exists() else None
         if args.action == "doctor":
-            return doctor(config, args.connect, args.observe_hicc, args.report)
-        if args.action in {"legacy-archive", "cutover-activate"}:
-            from .legacy_cutover import (
-                activate_wrapper, activation_inventory, archive_legacy_state, legacy_inventory,
-            )
-            if args.apply and not args.confirm_hicc_retired:
-                raise RouteError("explicit_hicc_retirement_confirmation_required")
-            if args.action == "legacy-archive":
-                if args.apply:
-                    archived = archive_legacy_state()
-                    print(f"legacy state archived privately at {archived}")
-                else:
-                    print(json.dumps(legacy_inventory(), indent=2))
-                return 0
-            if args.apply:
-                backup = activate_wrapper(args.archive)
-                print(f"old Claude wrapper backed up privately at {backup}")
-            else:
-                print(json.dumps(activation_inventory(args.archive), indent=2))
-            return 0
+            return doctor(config, args.connect, args.report)
         if config is None:
             raise RouteError("config_required; run_vps-route_init")
         if args.action == "auth":
@@ -543,7 +520,8 @@ def main() -> int:
             from .lifecycle import confirm_operation
 
             print(json.dumps(full_reset_inventory(config), indent=2))
-            confirm_operation("Archive old local state and create a fresh profile?", yes=args.yes)
+            confirm_operation("Archive this tool profile (login and history) and create a fresh one?",
+                              yes=args.yes)
             with maintenance_barrier(exclusive=True):
                 result = reset_local_state(config)
             print(json.dumps(result, indent=2), flush=True)
@@ -613,14 +591,14 @@ def main() -> int:
                                         and bool(os.environ.get("ORCA_CLI_COMMAND")))
                       ))
     except RouteError as exc:
-        print(f"claude-launcher: {exc}")
+        print(f"vps-route: {exc}")
         from .diagnostics import HINTS
 
         if str(exc) in HINTS:
             print(f"hint: {HINTS[str(exc)]}")
         return 69
     except OSError:
-        print("claude-launcher: local_operation_failed")
+        print("vps-route: local_operation_failed")
         return 70
     except (EOFError, KeyboardInterrupt):
         print("vps-route: cancelled")

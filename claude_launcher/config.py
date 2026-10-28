@@ -1,4 +1,4 @@
-"""Explicit route configuration; never read Claude or HICC account files."""
+"""Explicit route configuration; never read Claude account files."""
 
 from __future__ import annotations
 
@@ -40,6 +40,8 @@ class Config:
         "https://www.cloudflare.com/cdn-cgi/trace",
     )
     orca_control: bool = False
+    # Extra HOME entry names or fnmatch patterns hidden when research_filesystem is on.
+    private_home_entries: tuple[str, ...] = ()
 
     @property
     def profile_home(self) -> Path:
@@ -72,6 +74,17 @@ class Config:
                 if not isinstance(urls, (list, tuple)) or not 1 <= len(urls) <= 4:
                     raise ValueError
                 values["connectivity_urls"] = tuple(urls)
+            if "private_home_entries" in values:
+                entries = values["private_home_entries"]
+                if not isinstance(entries, (list, tuple)) or len(entries) > 64:
+                    raise ValueError
+                for entry in entries:
+                    # One name directly under HOME; never a path that could reach elsewhere.
+                    if (not isinstance(entry, str) or not 1 <= len(entry) <= 128
+                            or entry in {".", ".."} or "/" in entry
+                            or any(ord(char) < 32 for char in entry)):
+                        raise ValueError
+                values["private_home_entries"] = tuple(entries)
             values["identity_file"] = Path(values["identity_file"]).expanduser().absolute()
             values["known_hosts"] = Path(values["known_hosts"]).expanduser().absolute()
             if values.get("texlive_root") is not None:

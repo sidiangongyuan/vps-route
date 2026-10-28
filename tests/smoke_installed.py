@@ -92,7 +92,7 @@ def main() -> int:
         assert report.stat().st_mode & 0o777 == 0o600
         assert "203.0.113" not in report.read_text()
         print(json.dumps({"installed_cli_smoke": "ok", "fresh_home": True,
-                          "legacy_state_preserved": True, "account_login_performed": False,
+                          "host_claude_preserved": True, "account_login_performed": False,
                           "remote_deployment_performed": False, "runs": runs}, indent=2))
     return 0
 

@@ -19,42 +19,54 @@ from .wire import RouteError, proxy_json, server_health
 
 
 HINTS = {
-    "invalid_setup_token_format": (
-        "Paste the long-lived OAuth token printed by claude setup-token."
-    ),
+    "invalid_setup_token_format": "Paste the full long-lived token printed by `claude setup-token`.",
     "setup_token_active; remove_local_token_before_browser_login": (
-        "Review vps-route auth remove-token, then use --apply before browser login."
+        "An imported token is active. Preview `vps-route auth remove-token`, run it with "
+        "--apply, then log in with the browser."
     ),
     "token_import_requires_interactive_terminal": (
-        "Run auth import-token in an interactive terminal; token input stays hidden."
+        "Run `vps-route auth import-token` in an interactive terminal; the input stays hidden."
     ),
     "unsafe_or_unreadable_token_storage": (
-        "Check this profile token directory ownership and permissions; symlinks are refused."
+        "Check the ownership and permissions of this profile's token directory; symlinks are refused."
     ),
-    "orca_cli_not_found": "Run from an Orca terminal with its ORCA_CLI_COMMAND available.",
-    "unsupported_orca_cli_layout": "Orca integration requires the Linux remote Node CLI wrapper.",
+    "orca_cli_not_found": "Start from an Orca terminal where ORCA_CLI_COMMAND is set.",
+    "unsupported_orca_cli_layout": "Orca integration needs Orca's Linux remote Node CLI wrapper.",
     "orca_runtime_unavailable": "Check that the selected local Orca runtime is running.",
-    "unsafe_orca_runtime": "Check the selected Orca runtime ownership and private permissions.",
-    "orca_local_unix_runtime_required": "Orca integration needs its local Unix socket, not a remote URL.",
-    "bootstrap_proxy_unavailable": "Start the configured local VPN/proxy and check its port.",
-    "openbsd_netcat_required_for_ssh_http_proxy": "Install OpenBSD netcat for the SSH bootstrap.",
-    "ssh_key_or_verified_known_hosts_missing": "Check the SSH key and verified known_hosts paths.",
-    "ssh_host_key_verification_failed": "Verify the VPS host fingerprint independently; do not bypass it.",
-    "ssh_authentication_failed": "Check SSH user/key authorization on the VPS.",
-    "ssh_tunnel_failed": "Check VPS reachability, SSH port and the configured bootstrap proxy.",
-    "ssh_tunnel_start_timeout": "Check VPS/SSH connectivity; no direct fallback was attempted.",
-    "proxy_socket_unavailable": "Check the private CONNECT service and remote socket path on the VPS.",
-    "server_health_unavailable": "Check the VPS CONNECT service; the health response was incomplete.",
-    "server_protocol_incompatible": "Inspect server-version; explicitly deploy a compatible VPS service.",
-    "target_resolution_failed": "The VPS could not resolve the target; check its DNS/upstream.",
-    "upstream_unavailable": "The VPS service could not connect upstream; check its exit/proxy.",
-    "proxy_connect_rejected": "The VPS CONNECT request was rejected; check service/upstream policy.",
-    "probe_tls_certificate_failed": "Check TLS certificates/clock/interception; do not disable verification.",
-    "probe_tls_failed": "CONNECT succeeded but TLS failed; inspect the VPS upstream/proxy.",
-    "probe_transport_failure": "Inspect VPS upstream/proxy and probe reachability; SSH alone is not enough.",
-    "connectivity_check_timeout": "The connectivity check timed out; inspect the route and target reachability.",
-    "probe_http_failure": "The probe website returned an error; inspect it before blaming the exit.",
-    "probe_invalid_json": "The probe returned invalid JSON; use a compatible HTTPS IP/country endpoint.",
+    "unsafe_orca_runtime": "Check that the Orca runtime is owned by you and not shared with others.",
+    "orca_local_unix_runtime_required": "Orca integration needs a local Unix socket, not a remote URL.",
+    "network_isolation_unavailable": (
+        "bubblewrap could not create a private network namespace. Install bubblewrap. On Ubuntu "
+        "23.10 and later, AppArmor may block unprivileged user namespaces (see Troubleshooting "
+        "in the README). Only Ubuntu 22.04 is verified."
+    ),
+    "bootstrap_proxy_unavailable": "Start the local proxy configured for SSH and check its port.",
+    "openbsd_netcat_required_for_ssh_http_proxy": (
+        "Install OpenBSD netcat; SSH needs it to use the configured local proxy."
+    ),
+    "ssh_key_or_verified_known_hosts_missing": "Check the SSH key and known_hosts paths in the config.",
+    "ssh_host_key_verification_failed": (
+        "Confirm the VPS host fingerprint through your provider's console; never skip this check."
+    ),
+    "ssh_authentication_failed": "Check the SSH user and key authorization on the VPS (authorized_keys).",
+    "ssh_tunnel_failed": "Check that the VPS is reachable on its SSH port, and the local proxy if set.",
+    "ssh_tunnel_start_timeout": "SSH did not connect in time. Nothing was sent directly.",
+    "proxy_socket_unavailable": "Check the connection service and its socket path on the VPS.",
+    "server_health_unavailable": "The VPS service gave an incomplete health response; check the service.",
+    "server_protocol_incompatible": (
+        "Run `vps-route server-version`, then redeploy with `vps-route setup-vps --apply`."
+    ),
+    "target_resolution_failed": "The VPS could not resolve the site; check the VPS DNS.",
+    "upstream_unavailable": "The VPS could not reach the site; check its outbound network or proxy.",
+    "proxy_connect_rejected": "The VPS service refused the request; check its upstream policy.",
+    "probe_tls_certificate_failed": (
+        "TLS certificate check failed. Check the clock and any HTTPS interception; keep verification on."
+    ),
+    "probe_tls_failed": "The VPS connected but TLS failed; check the VPS outbound proxy.",
+    "probe_transport_failure": "SSH works, but the test site was unreachable; check the VPS outbound path.",
+    "connectivity_check_timeout": "The connectivity check timed out; check the VPS and the test site.",
+    "probe_http_failure": "The test site returned an error; check that site before changing the VPS.",
+    "probe_invalid_json": "The IP lookup returned invalid JSON; use an HTTPS endpoint that returns IP and country.",
 }
 
 
@@ -73,7 +85,7 @@ def failure_detail(reason: str) -> dict:
     else:
         stage = "connectivity"
     return {"stage": stage, "result": reason,
-            "hint": HINTS.get(reason, "Inspect the configured route; do not enable direct fallback.")}
+            "hint": HINTS.get(reason, "Check the configured route; vps-route never falls back to a direct connection.")}
 
 
 def _local_https_probe(config: Config, url: str) -> str:
@@ -195,14 +207,14 @@ def connection_diagnosis(reason: str, stages: list[dict]) -> dict[str, object]:
         domain, confirmed = "vps_proxy_service", False
         summary = "VPS SSH connected, but the private proxy service check did not succeed."
         chinese = "VPS SSH 已连接，但 VPS 私有代理服务检查失败；请检查服务及转发配置。"
-        next_step = HINTS.get(reason, "Check the VPS private proxy service and socket path.")
+        next_step = HINTS.get(reason, "Check the connection service and its socket path on the VPS.")
     else:
         domain, confirmed = "vps_to_destination", False
         summary = "VPS SSH and the proxy endpoint responded, but forwarded HTTPS failed. " \
                   "The VPS exit, DNS, optional upstream proxy or destination may be affected."
         chinese = "VPS SSH 和代理端点已响应，转发 HTTPS 失败；请检查 VPS 出网、DNS、" \
                   "可选上游代理及目标网站。"
-        next_step = HINTS.get(reason, "Check VPS-to-destination connectivity.")
+        next_step = HINTS.get(reason, "Check that the VPS can reach the destination.")
     return {
         "fault_domain": domain, "cause_confirmed": confirmed,
         "summary": summary, "summary_zh": chinese, "next_step": next_step,

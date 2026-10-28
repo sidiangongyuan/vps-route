@@ -11,6 +11,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import urllib.request
 from pathlib import Path
 
 from . import __version__
@@ -24,31 +25,38 @@ PACKAGE = Path(__file__).resolve().parent
 VERSION = re.compile(r"\d+\.\d+\.\d+")
 
 
-def _run(command: list[str], *, cwd: Path | None = None, timeout: int = 60) -> str:
+def _run(command: list[str], *, cwd: Path | None = None, timeout: int = 60,
+         env: dict[str, str] | None = None) -> str:
     try:
         result = subprocess.run(command, cwd=cwd, capture_output=True, text=True,
-                                timeout=timeout, check=False)
+                                timeout=timeout, check=False, env=env)
     except (OSError, subprocess.TimeoutExpired):
-        raise RouteError("self_update_command_failed; check_git_gh_or_package_manager") from None
+        raise RouteError("self_update_command_failed; check_git_or_package_manager") from None
     if result.returncode:
         # Package/SSH/git output can contain credentials or private paths.
         raise RouteError("self_update_command_failed; check_access_and_installation")
     return result.stdout.strip()
 
 
+def _fetch_release(endpoint: str) -> str:
+    """Read public release metadata; the repository is public, so no login is sent."""
+    request = urllib.request.Request(
+        f"https://api.github.com/{endpoint}",
+        headers={"Accept": "application/vnd.github+json", "User-Agent": f"vps-route/{__version__}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.read(1_000_001).decode("utf-8")
+    except (OSError, ValueError):
+        raise RouteError("formal_release_unavailable; check_published_releases_and_network") from None
+
+
 def official_release(version: str | None = None) -> dict:
     if version is not None and not VERSION.fullmatch(version):
         raise RouteError("self_update_requires_a_formal_X_Y_Z_release")
-    if not shutil.which("gh"):
-        raise RouteError("github_cli_required; authenticate_gh_for_the_private_repository")
     endpoint = f"repos/{REPOSITORY}/releases/" + (f"tags/v{version}" if version else "latest")
     try:
-        try:
-            response = _run(["gh", "api", endpoint])
-        except RouteError:
-            raise RouteError(
-                "formal_release_unavailable; check_published_releases_and_gh_access"
-            ) from None
+        response = _fetch_release(endpoint)
         value = json.loads(response)
         tag = value["tag_name"]
         if (value.get("draft") is not False or value.get("prerelease") is not False
@@ -264,8 +272,9 @@ def self_update(*, version: str | None = None, apply: bool = False,
             raise RouteError("unsafe_update_backup")
         with tempfile.TemporaryDirectory(prefix="release-", dir=update_root) as temporary:
             source = Path(temporary) / "source"
-            _run(["gh", "repo", "clone", REPOSITORY, str(source), "--", "--depth", "1",
-                  "--branch", release["tag"]], timeout=120)
+            _run(["git", "clone", "--quiet", "--depth", "1", "--branch", release["tag"],
+                  f"https://github.com/{REPOSITORY}.git", str(source)], timeout=120,
+                 env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
             _validate_code(source, release["version"])
             record_value = {"installation": plan, "previous_version": __version__,
                             "installed_version": release["version"]}

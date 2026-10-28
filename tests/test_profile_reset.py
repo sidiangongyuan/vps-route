@@ -30,8 +30,6 @@ class ProfileResetTests(unittest.TestCase):
         self.patches = [
             patch.object(Path, "home", return_value=self.home),
             patch("claude_launcher.profile_reset._profile_is_running", return_value=False),
-            patch("claude_launcher.legacy_cutover._same_user_legacy_process_running",
-                  return_value=False),
         ]
         for item in self.patches:
             item.start()
@@ -44,11 +42,12 @@ class ProfileResetTests(unittest.TestCase):
     def test_preview_does_not_move_any_state(self):
         result = full_reset_inventory(self.config)
         self.assertTrue(result["profile_present"])
-        self.assertEqual(set(result["legacy_present"]), {"claude-home", "claude-global"})
+        self.assertTrue(result["existing_claude_outside_tool_unchanged"])
+        self.assertNotIn("legacy_present", result)
         self.assertTrue((self.profile / ".claude/.credentials.json").exists())
         self.assertFalse((self.profile.parent / ".archives").exists())
 
-    def test_full_reset_archives_both_stores_without_following_projects_link(self):
+    def test_full_reset_archives_only_tool_profile_and_keeps_host_claude(self):
         preserved = self.home / "project.py"
         preserved.write_text("source remains")
         shared = self.home / ".agents/skills/example"
@@ -56,34 +55,34 @@ class ProfileResetTests(unittest.TestCase):
         (shared / "SKILL.md").write_text("generic instructions")
         result = reset_local_state(self.config)
         archived = Path(result["profile_archive"])
-        legacy = Path(result["legacy_archive"])
+        self.assertNotIn("legacy_archive", result)
         self.assertTrue((archived / ".claude/.credentials.json").is_file())
-        self.assertTrue((legacy / "claude-home/projects").is_symlink())
-        self.assertFalse((self.home / ".claude").exists())
-        self.assertFalse((self.home / ".claude.json").exists())
+        # The user's own Claude installation outside the tool is never moved.
+        self.assertTrue((self.home / ".claude/projects").is_symlink())
+        self.assertEqual((self.home / ".claude.json").read_text(), "fixture only")
+        self.assertFalse((self.home / ".local/share/claude-launcher/legacy-archives").exists())
         self.assertFalse((self.profile / ".claude/.credentials.json").exists())
         self.assertFalse((self.profile / ".claude.json").exists())
         settings = self.profile / ".claude/settings.json"
         self.assertEqual(json.loads(settings.read_text()), {"autoUpdatesChannel": "latest"})
         self.assertEqual(settings.stat().st_mode & 0o777, 0o600)
         self.assertEqual(archived.stat().st_mode & 0o777, 0o700)
-        self.assertEqual(legacy.stat().st_mode & 0o777, 0o700)
         self.assertEqual(preserved.read_text(), "source remains")
         self.assertTrue((shared / "SKILL.md").exists())
 
-    def test_running_profile_refuses_before_any_legacy_moves(self):
+    def test_running_profile_refuses_before_any_move(self):
         with patch("claude_launcher.profile_reset._profile_is_running", return_value=True):
             with self.assertRaisesRegex(RouteError, "still_running"):
                 reset_local_state(self.config)
         self.assertTrue((self.home / ".claude.json").exists())
         self.assertTrue((self.profile / ".claude/.credentials.json").exists())
 
-    def test_unsafe_legacy_path_refuses_before_profile_rotation(self):
+    def test_symlinked_host_claude_state_does_not_block_or_get_moved(self):
         (self.home / ".claude.json").unlink()
         (self.home / ".claude.json").symlink_to(self.home / "unrelated")
-        with self.assertRaisesRegex(RouteError, "unsafe_legacy_path"):
-            reset_local_state(self.config)
-        self.assertTrue((self.profile / ".claude/.credentials.json").exists())
+        result = reset_local_state(self.config)
+        self.assertTrue((self.home / ".claude.json").is_symlink())
+        self.assertTrue((Path(result["profile_archive"]) / ".claude/.credentials.json").exists())
 
     def test_symlinked_profile_ancestor_is_rejected(self):
         alias = self.home / "alias"
@@ -92,10 +91,9 @@ class ProfileResetTests(unittest.TestCase):
         with self.assertRaisesRegex(RouteError, "unsafe_profile_path"):
             reset_local_state(self.config)
 
-    def test_second_reset_handles_absent_legacy_state(self):
+    def test_second_reset_archives_the_fresh_profile_again(self):
         reset_local_state(self.config)
         second = reset_local_state(self.config)
-        self.assertIsNone(second["legacy_archive"])
         self.assertIsNotNone(second["profile_archive"])
         self.assertEqual(os.listdir(self.profile), [".claude"])
 

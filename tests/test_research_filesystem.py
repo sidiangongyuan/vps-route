@@ -45,7 +45,8 @@ class ResearchFilesystemTests(unittest.TestCase):
             (data / 'result.csv').write_text('fixture data')
             (home / 'notes.txt').write_text('ordinary home file')
             for directory in (home / '.ssh', home / '.claude', home / '.config',
-                              home / '.local/share/claude-launcher/legacy-archives'):
+                              home / '.local/share/claude-launcher/legacy-archives',
+                              home / 'clash-for-linux', home / '.my-vpn-tool'):
                 directory.mkdir(parents=True, exist_ok=True)
                 (directory / 'secret').write_text('synthetic secret')
             (home / '.claude.json').write_text('synthetic account')
@@ -77,6 +78,8 @@ assert not (home/'.ssh/secret').exists()
 assert not (home/'.claude/secret').exists()
 assert not (home/'.config/secret').exists()
 assert not (home/'.local/share/claude-launcher/legacy-archives/secret').exists()
+assert not (home/'clash-for-linux/secret').exists()
+assert not (home/'.my-vpn-tool/secret').exists()
 assert not (data/'cloud-private/secret').exists()
 assert not (home/'.aws/secret').exists()
 for secret in [home/'.claude.json', repository/'config.vps.local.json']:
@@ -103,10 +106,11 @@ print('RESEARCH_FILES_PRIVATE_STATE_AND_NO_DIRECT_OK')
                 with patch('claude_launcher.runner.Path.home', return_value=home), \
                         patch('claude_launcher.filesystem.RESEARCH_ROOTS', (data, repository)), \
                         patch('claude_launcher.runner.private_paths',
-                              side_effect=lambda h, r: private_paths(h, repository)):
+                              side_effect=lambda h, r, extra: private_paths(h, repository, extra)):
                     args, env = sandbox_command(upstream, profile, project,
                                                 ['/usr/bin/python3', '-c', code],
                                                 research_filesystem=True,
+                                                private_home_entries=('.my-vpn-*',),
                                                 project_instructions=True)
                 result = subprocess.run(args, env=env, capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)

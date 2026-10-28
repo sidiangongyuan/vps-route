@@ -19,5 +19,6 @@
   "ssh_http_proxy": null,
   "texlive_root": null,
   "research_filesystem": false,
-  "orca_control": false
+  "orca_control": false,
+  "private_home_entries": []
 }

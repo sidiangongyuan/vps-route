@@ -16,7 +16,7 @@ def _values(action: argparse.Action, prefix: str) -> list[str]:
     if action.choices is not None:
         return [str(value) for value in action.choices if str(value).startswith(prefix)]
     if action.type is Path:
-        return [_DIRECTORIES if action.dest in {"workspace", "archive"} else _FILES]
+        return [_DIRECTORIES if action.dest == "workspace" else _FILES]
     return []
 
 
