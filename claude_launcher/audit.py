@@ -34,6 +34,8 @@ SAFE_REASONS = {
     "launcher_interrupted",
     "connectivity_check_timeout", "connectivity_check_failed",
     "ssh_forward_socket_changed", "unsafe_reconnect_directory",
+    "orca_cli_not_found", "unsupported_orca_cli_layout", "orca_runtime_unavailable",
+    "unsafe_orca_runtime", "orca_local_unix_runtime_required", "orca_requires_daily_run",
 }
 
 

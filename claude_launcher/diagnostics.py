@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import queue
 import socket
+import ssl
 import tempfile
 import threading
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -16,6 +19,23 @@ from .wire import RouteError, proxy_json, server_health
 
 
 HINTS = {
+    "invalid_setup_token_format": (
+        "Paste the long-lived OAuth token printed by claude setup-token."
+    ),
+    "setup_token_active; remove_local_token_before_browser_login": (
+        "Review vps-route auth remove-token, then use --apply before browser login."
+    ),
+    "token_import_requires_interactive_terminal": (
+        "Run auth import-token in an interactive terminal; token input stays hidden."
+    ),
+    "unsafe_or_unreadable_token_storage": (
+        "Check this profile token directory ownership and permissions; symlinks are refused."
+    ),
+    "orca_cli_not_found": "Run from an Orca terminal with its ORCA_CLI_COMMAND available.",
+    "unsupported_orca_cli_layout": "Orca integration requires the Linux remote Node CLI wrapper.",
+    "orca_runtime_unavailable": "Check that the selected local Orca runtime is running.",
+    "unsafe_orca_runtime": "Check the selected Orca runtime ownership and private permissions.",
+    "orca_local_unix_runtime_required": "Orca integration needs its local Unix socket, not a remote URL.",
     "bootstrap_proxy_unavailable": "Start the configured local VPN/proxy and check its port.",
     "openbsd_netcat_required_for_ssh_http_proxy": "Install OpenBSD netcat for the SSH bootstrap.",
     "ssh_key_or_verified_known_hosts_missing": "Check the SSH key and verified known_hosts paths.",
@@ -54,6 +74,141 @@ def failure_detail(reason: str) -> dict:
         stage = "connectivity"
     return {"stage": stage, "result": reason,
             "hint": HINTS.get(reason, "Inspect the configured route; do not enable direct fallback.")}
+
+
+def _local_https_probe(config: Config, url: str) -> str:
+    """Probe the configured bootstrap path, with verified TLS and no fallback."""
+    target = urlsplit(url)
+    proxy = urlsplit(config.ssh_http_proxy) if config.ssh_http_proxy else None
+    connection = http.client.HTTPSConnection(
+        proxy.hostname if proxy else target.hostname,
+        proxy.port if proxy else 443,
+        timeout=config.timeout_seconds,
+        context=ssl.create_default_context(),
+    )
+    if proxy:
+        connection.set_tunnel(target.hostname, 443)
+    try:
+        path = target.path or "/"
+        if target.query:
+            path += "?" + target.query
+        connection.request("GET", path)
+        response = connection.getresponse()
+        return "https_reachable" if 200 <= response.status < 500 else "probe_http_failure"
+    except ssl.SSLCertVerificationError:
+        return "probe_tls_certificate_failed"
+    except ssl.SSLError:
+        return "probe_tls_failed"
+    except (TimeoutError, socket.timeout):
+        return "probe_timeout"
+    except (OSError, http.client.HTTPException):
+        return "probe_transport_failure"
+    finally:
+        connection.close()
+
+
+def local_network_diagnostics(config: Config) -> dict:
+    """Bound concurrent control probes; failures do not prevent the VPS check."""
+    outcome: queue.Queue = queue.Queue()
+    started = time.monotonic()
+
+    def inspect(index: int, url: str) -> None:
+        began = time.monotonic()
+        reason = _local_https_probe(config, url)
+        outcome.put({"target_index": index, "result": reason,
+                     "elapsed_seconds": round(time.monotonic() - began, 3)})
+
+    for index, url in enumerate(config.connectivity_urls):
+        threading.Thread(target=inspect, args=(index, url), daemon=True).start()
+    results = {}
+    while len(results) < len(config.connectivity_urls):
+        try:
+            item = outcome.get(timeout=max(0, config.timeout_seconds -
+                                           (time.monotonic() - started)))
+        except queue.Empty:
+            break
+        results[item["target_index"]] = item
+    probes = [results.get(index, {"target_index": index, "result": "probe_timeout",
+                                "elapsed_seconds": round(time.monotonic() - started, 3)})
+              for index in range(len(config.connectivity_urls))]
+    reachable = any(item["result"] == "https_reachable" for item in probes)
+    return {
+        "stage": "local_network", "result": "https_reachable" if reachable else "unconfirmed",
+        "path": "configured_http_proxy" if config.ssh_http_proxy else "system_network",
+        "probes": probes,
+        "summary_zh": "本机联网路径已完成 HTTPS 实测。" if reachable else
+                      "本机 HTTPS 测试未成功；本机网络、代理或测试网站可能异常，继续检查 VPS。",
+    }
+
+
+def connection_diagnosis(reason: str, stages: list[dict]) -> dict[str, object]:
+    """Describe observed boundaries without guessing a provider or root cause."""
+    completed = {item["stage"] for item in stages if "hint" not in item}
+    attempted = {item["stage"] for item in stages}
+    # Checks run in order; a failed check may not have recorded a success row.
+    if "ssh" in completed:
+        attempted.add("vps_service")
+    if "vps_service" in completed and not reason.startswith("server_"):
+        attempted.add("connectivity")
+    if reason == "reachable":
+        domain, confirmed = "none", True
+        summary = "The verified VPS SSH route and forwarded HTTPS requests are reachable."
+        chinese = "VPS SSH 已连接，经 VPS 转发的 HTTPS 请求正常。"
+        next_step = "No connection repair is required for this check."
+    elif reason in {"bootstrap_proxy_unavailable", "local_dependencies_unavailable",
+                    "openbsd_netcat_required_for_ssh_http_proxy",
+                    "ssh_key_or_verified_known_hosts_missing", "ssh_forward_socket_changed"}:
+        domain, confirmed = "local_environment", True
+        summary = "A local proxy, dependency, key file or forwarding path is unavailable."
+        chinese = "本机前置代理、依赖、SSH 文件或转发路径检查失败；尚未验证 VPS 链路。"
+        next_step = HINTS.get(reason, "Check local dependencies and network isolation support.")
+    elif reason == "ssh_authentication_failed":
+        domain, confirmed = "ssh_authentication", True
+        summary = "The SSH endpoint responded, but SSH authentication was rejected."
+        chinese = "SSH 服务已响应，但身份验证被拒绝；请核对本机密钥和 VPS 用户授权。"
+        next_step = HINTS[reason]
+    elif reason == "ssh_host_key_verification_failed":
+        domain, confirmed = "ssh_host_identity", True
+        summary = "The SSH endpoint responded, but its host identity could not be verified."
+        chinese = "SSH 服务已响应，但服务器指纹未通过验证；请独立核实 VPS 身份。"
+        next_step = HINTS[reason]
+    elif "ssh" not in completed:
+        domain, confirmed = "vps_or_network_path", False
+        summary = "No verified SSH connection to the VPS was established. The VPS, VPN " \
+                  "or intermediate network path may be unavailable."
+        chinese = "未建立到 VPS 的可信 SSH 连接；VPS、SSH 服务、VPN 或中间线路均可能异常。"
+        next_step = "Check the VPS console, SSH port and firewall; compare another network " \
+                    "path. A listening local proxy port alone does not prove VPN connectivity."
+        local = next((item for item in stages if item["stage"] == "local_network"), None)
+        if local and local["result"] == "https_reachable":
+            chinese = "本机经配置路径访问测试网站成功，但到 VPS 的 SSH 未建立；" \
+                      "请检查 VPS、SSH 端口及到该 VPS 的专用路径。"
+            summary = "Local HTTPS control probes succeeded, but verified VPS SSH failed. " \
+                      "The VPS, SSH service or target-specific network path needs checking."
+        elif local:
+            domain = "local_network_or_vps_path"
+            chinese = "本机 HTTPS 测试和 VPS SSH 均未成功；优先检查本机网络/VPN，" \
+                      "VPS 状态仍待确认。"
+            summary = "Local HTTPS controls and VPS SSH both failed. Check local networking " \
+                      "and the configured VPN first; VPS availability remains unconfirmed."
+    elif "vps_service" not in completed or reason.startswith("server_"):
+        domain, confirmed = "vps_proxy_service", False
+        summary = "VPS SSH connected, but the private proxy service check did not succeed."
+        chinese = "VPS SSH 已连接，但 VPS 私有代理服务检查失败；请检查服务及转发配置。"
+        next_step = HINTS.get(reason, "Check the VPS private proxy service and socket path.")
+    else:
+        domain, confirmed = "vps_to_destination", False
+        summary = "VPS SSH and the proxy endpoint responded, but forwarded HTTPS failed. " \
+                  "The VPS exit, DNS, optional upstream proxy or destination may be affected."
+        chinese = "VPS SSH 和代理端点已响应，转发 HTTPS 失败；请检查 VPS 出网、DNS、" \
+                  "可选上游代理及目标网站。"
+        next_step = HINTS.get(reason, "Check VPS-to-destination connectivity.")
+    return {
+        "fault_domain": domain, "cause_confirmed": confirmed,
+        "summary": summary, "summary_zh": chinese, "next_step": next_step,
+        "not_checked": [stage for stage in ("ssh", "vps_service", "connectivity")
+                        if stage not in attempted],
+    }
 
 
 def observe_exit(config: Config, socket_path: Path) -> dict:
@@ -98,6 +253,7 @@ def connect_diagnostics(config: Config) -> dict:
             stages.append({"stage": "local_bootstrap", "result": "tcp_reachable"})
         else:
             stages.append({"stage": "local_bootstrap", "result": "explicit_direct_ssh"})
+        stages.append(local_network_diagnostics(config))
         with tempfile.TemporaryDirectory(prefix="vps-route-doctor-") as temporary:
             tunnel = SSHTunnel(config, Path(temporary) / "proxy.sock")
             try:
@@ -121,6 +277,7 @@ def connect_diagnostics(config: Config) -> dict:
         reason = str(exc)
         result["route_result"] = reason
         stages.append(failure_detail(reason))
+    result["diagnosis"] = connection_diagnosis(result["route_result"], stages)
     return result
 
 

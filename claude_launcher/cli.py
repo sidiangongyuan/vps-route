@@ -16,10 +16,13 @@ from pathlib import Path
 from . import __version__
 from .audit import AuditLog, log_tail
 from .config import Config
+from .arguments import build_parser
+from .credentials import has_token, prompt_token, read_token, remove_token, store_token, token_status
 from .customizations import skills_arguments
 from .observe import observe_hicc
 from .profile_reset import full_reset_inventory, reset_local_state, reset_profile
 from .onboarding import complete_authenticated_onboarding
+from .orca_access import prepare_orca_access
 from .setup import default_config_path, initialize_config
 from .sessions import SessionLease, list_sessions, maintenance_barrier, stop_session
 from .runner import (
@@ -108,20 +111,21 @@ def doctor(config: Config | None, connect: bool, hicc: bool = False,
     if connect:
         if config is None:
             raise RouteError("connect_requires_config")
-        from .diagnostics import connect_diagnostics
+        from .diagnostics import connect_diagnostics, connection_diagnosis
 
         if ready:
             checks.update(connect_diagnostics(config))
         else:
             checks.update(connectivity_ok=False, network_probe_executed=False,
-                          route_result="local_dependencies_unavailable")
+                          route_result="local_dependencies_unavailable",
+                          diagnosis=connection_diagnosis("local_dependencies_unavailable", []))
     if report is not None:
         if hicc:
             raise RouteError("support_report_cannot_include_hicc_observation")
         from .management import private_json
 
         private_json(report.expanduser().absolute(), checks)
-    print(json.dumps(checks, indent=2))
+    print(json.dumps(checks, indent=2, ensure_ascii=False))
     return 0 if ready and (not connect or checks["connectivity_ok"]) else 69
 
 
@@ -139,7 +143,8 @@ def system_python_compatible() -> bool:
 
 def launch(config: Config, workspace: Path, arguments: list[str], install: bool = False,
            login: bool = False, safe_mode: bool = False,
-           verify_after: bool = False, skills_mode: bool = False) -> int:
+           verify_after: bool = False, skills_mode: bool = False,
+           orca: bool = False) -> int:
     if install:
         from .install import installation_present
 
@@ -168,7 +173,8 @@ def launch(config: Config, workspace: Path, arguments: list[str], install: bool 
         with maintenance_barrier(exclusive=install), \
                 SessionLease(audit.run_id, config.profile, operation):
             return _launch(config, workspace, arguments, audit, install=install, login=login,
-                           safe_mode=safe_mode, verify_after=verify_after, skills_mode=skills_mode)
+                           safe_mode=safe_mode, verify_after=verify_after, skills_mode=skills_mode,
+                           orca=orca)
     except RouteError as exc:
         audit.exit_code, audit.reason = 69, str(exc)
         raise
@@ -189,7 +195,8 @@ def launch(config: Config, workspace: Path, arguments: list[str], install: bool 
 
 def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditLog,
             install: bool = False, login: bool = False, safe_mode: bool = False,
-            verify_after: bool = False, skills_mode: bool = False) -> int:
+            verify_after: bool = False, skills_mode: bool = False,
+            orca: bool = False) -> int:
     if install:
         from .install import installation_present
 
@@ -217,7 +224,12 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
         raise RouteError("profile_must_not_be_live_home")
     code, reason = 69, "route_not_started"
     keep_session = audit.operation == "run" and not install and not verify_after and not login
+    oauth_token = (read_token(profile_home)
+                   if keep_session and arguments[:1] != ["setup-token"] else None)
     with tempfile.TemporaryDirectory(prefix="claude-route-") as directory:
+        if orca and not keep_session:
+            raise RouteError("orca_requires_daily_run")
+        orca_access = prepare_orca_access(Path(directory) / "orca") if orca else None
         route_directory = Path(directory) / "route"
         route_directory.mkdir(mode=0o700)
         tunnel = SSHTunnel(config, route_directory / "proxy.sock")
@@ -227,7 +239,8 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
             if reason:
                 raise RouteError(reason)
             audit.write("preflight_passed")
-            if (safe_mode or skills_mode) and complete_authenticated_onboarding(profile_home, executable):
+            if (oauth_token is None and (safe_mode or skills_mode)
+                    and complete_authenticated_onboarding(profile_home, executable)):
                 print("vps-route: existing login kept; first-run UI setup repaired", flush=True)
             if login:
                 print("Open the official login URL shown below on a browser using the VPS exit."
@@ -246,7 +259,10 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                 research_filesystem=config.research_filesystem,
                 timezone=config.timezone,
                 reconnectable=keep_session,
+                orca_access=orca_access,
             )
+            if oauth_token is not None:
+                environment["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
             code, reason = run_supervised(
                 command, environment,
                 None if keep_session else RuntimeConnectivityMonitor(
@@ -341,94 +357,61 @@ def private_workspace(config: Config) -> Path:
     return workspace
 
 
+def token_auth(config: Config, args: argparse.Namespace) -> int | None:
+    """Explicit local token lifecycle; no account API calls or terminal recording."""
+    operation = args.operation
+    if args.replace and operation != "import-token":
+        raise RouteError("replace_only_valid_for_token_import")
+    if operation == "import-token":
+        if args.text or args.apply or args.dry_run or args.yes:
+            raise RouteError("invalid_token_import_options")
+        if has_token(config.profile_home) and not args.replace:
+            raise RouteError("setup_token_exists; use_--replace")
+        token = prompt_token()
+        with maintenance_barrier():
+            store_token(config.profile_home, token, replace=args.replace)
+        print("Setup token saved privately for this profile. "
+              "New sessions will use it; validity has not been checked. Next: vps-route run")
+        return 0
+    if operation == "remove-token":
+        if args.text or (args.apply and args.dry_run):
+            raise RouteError("invalid_token_removal_options")
+        present = has_token(config.profile_home)
+        if not args.apply:
+            print(json.dumps({"token_stored": present, "apply_required": present,
+                              "local_copy_only": True, "upstream_revoked": False}, indent=2))
+            return 0
+        from .lifecycle import confirm_operation
+
+        if present:
+            confirm_operation("Remove the local token? Future sessions use saved login, if any.",
+                              yes=args.yes)
+            with maintenance_barrier():
+                remove_token(config.profile_home)
+        print("Local setup token removed; upstream token and running sessions unchanged.")
+        return 0
+    if operation == "status" and not (args.apply or args.dry_run or args.yes):
+        result = token_status(config.profile_home)
+        if result is not None:
+            if args.text:
+                print("Authentication: setup-token (stored locally; validity not checked)")
+            else:
+                print(json.dumps(result, indent=2))
+            return 0
+    if operation == "login" and has_token(config.profile_home):
+        raise RouteError("setup_token_active; remove_local_token_before_browser_login")
+    return None
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", action="version", version=__version__)
-    parser.add_argument("--config", type=Path)
-    subparsers = parser.add_subparsers(dest="action", required=True)
-    initialize = subparsers.add_parser(
-        "init", help="create or reuse private config and profile; never reset account state",
-    )
-    initialize.add_argument("--from-file", type=Path, help="import a validated connection config")
-    initialize.add_argument("--keep-existing", action="store_true",
-                            help="compatibility option; init always preserves existing state")
-    initialize.add_argument("--dry-run", action="store_true", help="preview without writing or moving")
-    initialize.add_argument("-y", "--yes", action="store_true",
-                            help="compatibility option; init never resets existing state")
-    uninstall = subparsers.add_parser(
-        "uninstall", help="permanently remove local profiles, backups, logs, config and package",
-    )
-    uninstall.add_argument("--dry-run", action="store_true", help="preview; do not delete")
-    uninstall.add_argument("-y", "--yes", action="store_true", help="skip deletion confirmation only")
-    for category in ("profiles", "backups", "logs", "config", "package"):
-        uninstall.add_argument(f"--keep-{category}", action="store_true",
-                               help=f"preserve {category} during local cleanup")
-    provision = subparsers.add_parser("setup-vps", help="deploy only the private VPS CONNECT service")
-    provision.add_argument("--apply", action="store_true", help="install through verified SSH")
-    inspect = subparsers.add_parser("doctor", help="offline checks; optional VPS route probe")
-    inspect.add_argument("--connect", action="store_true")
-    inspect.add_argument("--observe-hicc", action="store_true", help="passive same-user socket metadata")
-    inspect.add_argument("--report", type=Path, help="write private sanitized JSON; no account contents")
-    configuration = subparsers.add_parser("config", help="view, validate or explicitly edit route config")
-    config_commands = configuration.add_subparsers(dest="config_action", required=True)
-    show = config_commands.add_parser("show", help="redacted values by default")
-    show.add_argument("--reveal", action="store_true", help="show local endpoint/path values")
-    config_commands.add_parser("validate", help="offline syntax and policy check; no login or network")
-    edit = config_commands.add_parser("set", help="preview one change; --apply writes atomically")
-    edit.add_argument("key")
-    edit.add_argument("value", help="string, JSON number, true/false, or null")
-    edit.add_argument("--apply", action="store_true")
-    subparsers.add_parser("status", help="list tracked tool-owned processes, not Claude conversation history")
-    sessions = subparsers.add_parser("sessions", help="list or safely stop one tracked tool process")
-    session_commands = sessions.add_subparsers(dest="sessions_action", required=True)
-    session_commands.add_parser("list")
-    stop = session_commands.add_parser("stop")
-    stop.add_argument("run_id", help="exact run_id printed by status; never an arbitrary PID")
-    stop.add_argument("--apply", action="store_true", help="request graceful stop; default previews")
-    subparsers.add_parser("server-version", help="read VPS service protocol/version; never deploys")
-    self_upgrade = subparsers.add_parser("self-update", help="manual launcher update from official releases")
-    self_upgrade.add_argument("--to", metavar="X.Y.Z", help="select a formal published release")
-    self_upgrade.add_argument("--rollback", action="store_true", help="restore previous launcher code only")
-    self_upgrade.add_argument("--apply", action="store_true", help="update only while all sessions are idle")
-    self_upgrade.add_argument("--check", action="store_true", help="check/preview only (the default)")
-    logs = subparsers.add_parser("logs", help="read private operational logs; no accounts or prompts")
-    logs.add_argument("--tail", type=int, default=20)
-    shell = subparsers.add_parser("shell", help="open an interactive VPS SSH shell")
-    shell.add_argument("--password", action="store_true",
-                       help="prompt in the terminal for the VPS password; keep restricted keys unchanged")
-    subparsers.add_parser("network-test", help="isolated HTTPS connectivity and direct-route blocking test")
-    archive = subparsers.add_parser("legacy-archive", help="preview or archive legacy Claude/HICC state")
-    archive.add_argument("--apply", action="store_true")
-    archive.add_argument("--confirm-hicc-retired", action="store_true")
-    activate = subparsers.add_parser("cutover-activate", help="preview or install an optional Claude wrapper")
-    activate.add_argument("--archive", type=Path, required=True)
-    activate.add_argument("--apply", action="store_true")
-    activate.add_argument("--confirm-hicc-retired", action="store_true")
-    auth = subparsers.add_parser("auth", help="authentication in the separate profile only")
-    auth.add_argument("operation", choices=["login", "status", "reset"])
-    auth.add_argument("--text", action="store_true", help="forward --text for auth status")
-    auth.add_argument("--apply", action="store_true", help="auth reset only: archive after confirmation")
-    auth.add_argument("--dry-run", action="store_true", help="auth reset only: preview without changes")
-    auth.add_argument("-y", "--yes", action="store_true", help="auth reset only: skip confirmation")
-    reset = subparsers.add_parser(
-        "reset", help="preview full local-state reset; --apply archives and reinstalls via VPS",
-    )
-    reset.add_argument("--apply", action="store_true", help="archive old state and create fresh state")
-    reset.add_argument("--no-install", action="store_true", help="leave fresh profile uninstalled")
-    reset.add_argument("--dry-run", action="store_true", help="preview without moving/installing")
-    reset.add_argument("-y", "--yes", action="store_true", help="skip confirmation, not safety checks")
-    subparsers.add_parser("native-version", help="show the isolated official Claude CLI version")
-    installer = subparsers.add_parser("install", help="official latest install into a separate home")
-    installer.add_argument("--workspace", type=Path)
-    run = subparsers.add_parser("run", help="launch the separately installed official CLI")
-    run.add_argument("--workspace", type=Path, default=Path.cwd())
-    run.add_argument("--safe-mode", action="store_true",
-                     help="disable all customizations for troubleshooting")
-    run.add_argument("arguments", nargs=argparse.REMAINDER)
-    upgrade = subparsers.add_parser("update", help="run official claude update through the same route")
-    upgrade.add_argument("--workspace", type=Path)
+    parser = build_parser()
     args = parser.parse_args()
     try:
+        if args.action == "completion":
+            from .completions import shell_script
+
+            print(shell_script(args.shell), end="")
+            return 0
         if args.action == "init":
             path = args.config or default_config_path()
             config = initialize_config(path, args.from_file, keep_existing=args.keep_existing,
@@ -507,6 +490,10 @@ def main() -> int:
             return 0
         if config is None:
             raise RouteError("config_required; run_vps-route_init")
+        if args.action == "auth":
+            handled = token_auth(config, args)
+            if handled is not None:
+                return handled
         if args.action == "install":
             from .install import installation_present
 
@@ -620,7 +607,11 @@ def main() -> int:
             print(f"vps-route: home directory isolated; using {workspace}", flush=True)
         return launch(config, workspace, arguments, install=args.action == "install",
                       safe_mode=safe_mode, skills_mode=args.action == "run" and not safe_mode,
-                      verify_after=args.action in {"install", "update"})
+                      verify_after=args.action in {"install", "update"},
+                      orca=args.action == "run" and (
+                          args.orca or (config.orca_control
+                                        and bool(os.environ.get("ORCA_CLI_COMMAND")))
+                      ))
     except RouteError as exc:
         print(f"claude-launcher: {exc}")
         from .diagnostics import HINTS

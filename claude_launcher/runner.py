@@ -29,6 +29,7 @@ from urllib.parse import urlsplit
 from .config import Config
 from .customizations import project_instruction_mounts, shared_skill_mounts
 from .filesystem import host_socket_mounts, private_mounts, private_paths, research_mounts
+from .orca_access import OrcaAccess
 from .wire import RouteError, proxy_reachable
 
 
@@ -300,6 +301,7 @@ def sandbox_command(
     research_filesystem: bool = False,
     timezone: str | None = None,
     reconnectable: bool = False,
+    orca_access: OrcaAccess | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """Create only mount/namespace changes scoped to the launched child."""
     profile_home = profile_home.resolve()
@@ -364,12 +366,16 @@ def sandbox_command(
         args.extend(["--bind", str(profile_home), str(profile_home)])
         # A pipx/venv package may itself live under a masked .local directory.
         args.extend(["--ro-bind", str(PACKAGE_DIR), str(PACKAGE_DIR)])
+        if orca_access is not None:
+            args.extend(orca_access.mounts())
         # Create the profile mountpoint first; remounting parents is not recursive.
         for path in hidden:
             if path.is_dir():
                 args.extend(["--remount-ro", str(path)])
     else:
         args.extend(["--ro-bind", str(PACKAGE_DIR), str(PACKAGE_DIR)])
+        if orca_access is not None:
+            args.extend(orca_access.mounts())
     if project_instructions:
         # Rebind only skill contents after masking the host's account directories.
         args.extend(shared_skill_mounts(profile_home, live_home))
@@ -398,6 +404,9 @@ def sandbox_command(
         # Explicit per-process choice, never an inherited token-bearing environment.
         environment["TZ"] = timezone
     path_entries = [str(profile_home / ".local/bin")]
+    if orca_access is not None:
+        environment.update(orca_access.environment())
+        path_entries.insert(0, orca_access.environment()["ORCA_CLI_BIN_DIR"])
     if texlive_bin is not None:
         path_entries.append(str(texlive_bin))
         # Keep generated formats/fonts in the persistent private profile, not TeX itself.

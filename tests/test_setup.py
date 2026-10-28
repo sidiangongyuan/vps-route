@@ -193,6 +193,7 @@ class SetupTests(unittest.TestCase):
     def test_nonprivate_directory_is_not_chmodded(self):
         folder = self.home / "shared"
         folder.mkdir(mode=0o755)
+        folder.chmod(0o755)  # The test must also model sharing under a private umask.
         with self.assertRaisesRegex(RouteError, "must_be_private"):
             initialize_config(folder / "config.json", self.source)
         self.assertEqual(folder.stat().st_mode & 0o777, 0o755)

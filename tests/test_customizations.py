@@ -12,6 +12,11 @@ from claude_launcher.wire import RouteError
 
 
 class CustomizationTests(unittest.TestCase):
+    def test_setup_token_reaches_official_subcommand_without_variadic_mcp_flags(self):
+        self.assertEqual(skills_arguments(["setup-token"]), ["--safe-mode", "setup-token"])
+        self.assertEqual(skills_arguments(["setup-token", "--help"]),
+                         ["--safe-mode", "setup-token", "--help"])
+
     def test_shared_skills_keep_private_priority_and_reject_external_links(self):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)

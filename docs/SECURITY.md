@@ -56,6 +56,26 @@ has no direct fallback.
   not conceal OS metadata or make the client appear to run on the VPS.
 - Connectivity checks do not measure IP reputation or guarantee against account restrictions.
 
+## Optional Orca control
+
+`run --orca` grants the selected local Orca runtime's control capability. Setting
+`orca_control: true` also enables it for daily runs whose launching environment
+provides `ORCA_CLI_COMMAND`, including Orca-launched children. It defaults to false.
+The integration currently supports Orca's Linux remote Node CLI wrapper. Only the
+CLI executable resources, a private temporary Unix-only bootstrap and its runtime socket are
+mounted; host Orca account/history databases and other relay sockets stay hidden.
+The temporary bootstrap contains an Orca control token and is removed on exit.
+No remote/WebSocket transport is exposed by this integration.
+
+The child keeps its private network namespace and VPS proxy. However, Orca can
+create host-side terminals, start other agents and perform other host operations.
+Those operations are outside the child's network boundary: local IPC access is
+not a restriction to read-only orchestration. Every new Claude must use a VPS
+Route launcher, not a separate binary, managed account or structured Chat UI that
+bypasses it. The tool does not enforce or modify Orca launch settings.
+Only enable this option when you intend to grant that host-control capability.
+Restart the Claude session after Orca restarts or its CLI/runtime changes.
+
 ## Your data
 
 The independent profile contains real credentials and conversation history after
@@ -77,6 +97,28 @@ own files behind on failure; there is no direct fallback.
 and historical backups. Preview first and use `--keep-*` options to retain data.
 It never connects to or removes anything on the VPS. Local file deletion does
 not revoke server-side tokens or erase browser cookies, snapshots or other copies.
+
+## Setup-token credentials
+
+`auth import-token` accepts a long-lived token through a hidden interactive
+prompt. It validates local format and stores an owned regular `0600` file in a
+`0700` directory in the selected profile. Symlinks, hard-linked credential files,
+foreign ownership and group/world-readable token storage are refused.
+Existing tokens require explicit `--replace`. Only the selected token is injected
+after the launcher sanitizes the child environment; ambient account variables
+remain excluded. SSH, installers, version/update commands and browser login do
+not receive the imported token.
+
+A stored token selects token authentication for new daily sessions. Invalid
+storage stops launch. To choose browser login, explicitly remove the local token.
+Status reports local storage and source only; it does not certify a valid server
+session. Removal does not revoke the upstream credential or change running
+processes. Reset archives and retained backups may still contain old tokens.
+Claude, its child processes, the same OS user and administrators can access
+process credentials. Network isolation does not make a token safe to publish.
+
+Shell completion is a metadata-only path before config and runtime imports.
+It never reads credential contents, starts a route, or records command lines.
 
 ## Reporting problems
 

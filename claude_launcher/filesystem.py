@@ -16,6 +16,7 @@ PRIVATE_NAMES = {
     '.gemini', '.copilot', '.cursor', '.cursor-server', '.vscode', '.vscode-server',
     '.codegeex', '.cc-switch', '.ufomiao', '.agents', '.Xauthority',
     '.tokentracker', '.tokentracker-safe-server', '.tokentracker-runtime',
+    '.orca', '.orca-remote',
     'clash', 'clash-for-lab-clean', 'clash-for-linux-install', 'mihomo-url.bak',
     '.profile', '.pam_environment', '.viminfo', '.wget-hsts', '.condarc', '.condarc.save',
 }

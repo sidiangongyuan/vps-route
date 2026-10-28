@@ -39,6 +39,7 @@ class Config:
         "https://www.gstatic.com/generate_204",
         "https://www.cloudflare.com/cdn-cgi/trace",
     )
+    orca_control: bool = False
 
     @property
     def profile_home(self) -> Path:
@@ -80,6 +81,8 @@ class Config:
                 if not isinstance(getattr(config, name), str):
                     raise ValueError
             if not isinstance(config.research_filesystem, bool):
+                raise ValueError
+            if not isinstance(config.orca_control, bool):
                 raise ValueError
             if config.timezone is not None:
                 if not isinstance(config.timezone, str):

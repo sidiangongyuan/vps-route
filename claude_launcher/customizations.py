@@ -23,6 +23,10 @@ LOADING_FLAGS = {"--settings", "--setting-sources", "--mcp-config", "--plugin-di
 
 
 def skills_arguments(arguments: list[str]) -> list[str]:
+    if arguments[:1] == ["setup-token"]:
+        # Keep variadic --mcp-config from consuming this official subcommand.
+        # Authorization has no need for project/user customizations.
+        return ["--safe-mode", *arguments]
     if arguments[:1] in (["remote-control"], ["rc"]):
         raise RouteError("remote_control_disabled")
     for argument in arguments:
