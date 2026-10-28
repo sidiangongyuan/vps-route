@@ -5,22 +5,28 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vps-route"
 dynamic = ["version"]
-description = "Linux Claude Code launcher with an isolated profile and an SSH-owned VPS route"
+description = "Run Claude Code in an isolated environment that reaches the internet only through your own VPS"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "LicenseRef-Proprietary"
+license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "sidiangongyuan"}]
 dependencies = []
+keywords = ["claude-code", "vps", "ssh", "proxy", "sandbox", "bubblewrap"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
   "Operating System :: POSIX :: Linux",
+  "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
   "Topic :: System :: Networking",
 ]
 
 [project.urls]
+Homepage = "https://github.com/sidiangongyuan/vps-route"
+Documentation = "https://github.com/sidiangongyuan/vps-route/blob/main/docs/USAGE.zh-CN.md"
+Changelog = "https://github.com/sidiangongyuan/vps-route/releases"
 Repository = "https://github.com/sidiangongyuan/vps-route"
 Issues = "https://github.com/sidiangongyuan/vps-route/issues"
 

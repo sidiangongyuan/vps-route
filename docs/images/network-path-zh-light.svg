@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="336" viewBox="0 0 960 336" role="img" aria-label="VPS Route 网络路径">
+<title>VPS Route 网络路径</title>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 1L10 5L0 9z" fill="#0b7a6a"/></marker></defs>
+<rect x="16" y="16" width="404" height="244" rx="14" fill="#f6f8fa" stroke="#d1d9e0" stroke-width="1.0"/>
+<text x="36" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#59636e" font-size="12" font-weight="600" text-anchor="start" xml:space="preserve" letter-spacing="1.2">你的电脑</text>
+<rect x="36" y="60" width="364" height="180" rx="12" fill="#e2f3ef" stroke="#0b7a6a" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="54" y="86" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#0b7a6a" font-size="12" font-weight="600" text-anchor="start" xml:space="preserve">隔离沙箱 · 没有通往外网的路由</text>
+<rect x="54" y="104" width="150" height="64" rx="10" fill="#ffffff" stroke="#d1d9e0" stroke-width="1.0"/>
+<text x="129" y="132" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#1f2328" font-size="15" font-weight="600" text-anchor="middle" xml:space="preserve">Claude Code</text>
+<text x="129" y="152" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#59636e" font-size="12" font-weight="400" text-anchor="middle" xml:space="preserve">官方命令行</text>
+<rect x="232" y="104" width="150" height="64" rx="10" fill="#ffffff" stroke="#d1d9e0" stroke-width="1.0"/>
+<text x="307" y="132" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#1f2328" font-size="15" font-weight="600" text-anchor="middle" xml:space="preserve">本机代理</text>
+<text x="307" y="152" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" fill="#59636e" font-size="11.5" font-weight="400" text-anchor="middle" xml:space="preserve">127.0.0.1:17878</text>
+<path d="M204 136H226" stroke="#0b7a6a" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="150" y="216" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#59636e" font-size="12" font-weight="400" text-anchor="start" xml:space="preserve">独立的登录、历史和技能</text>
+<path d="M382 136H548" stroke="#0b7a6a" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="436" y="123" width="60" height="26" rx="13" fill="#0b7a6a"/>
+<rect x="446" y="133" width="12" height="9" rx="2" fill="#ffffff"/><path d="M449 133v-2a3 3 0 0 1 6 0v2" fill="none" stroke="#ffffff" stroke-width="1.8"/>
+<text x="479" y="141" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" fill="#ffffff" font-size="11" font-weight="700" text-anchor="middle" xml:space="preserve">SSH</text>
+<text x="466" y="113" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#1f2328" font-size="12" font-weight="600" text-anchor="middle" xml:space="preserve">SSH 隧道</text>
+<text x="466" y="168" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#59636e" font-size="11.5" font-weight="400" text-anchor="middle" xml:space="preserve">密钥 + 已核对指纹</text>
+<rect x="552" y="78" width="180" height="116" rx="14" fill="#f6f8fa" stroke="#d1d9e0" stroke-width="1.0"/>
+<text x="642" y="112" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#1f2328" font-size="16" font-weight="700" text-anchor="middle" xml:space="preserve">你的 VPS</text>
+<text x="642" y="136" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#59636e" font-size="12.5" font-weight="400" text-anchor="middle" xml:space="preserve">连接服务</text>
+<text x="642" y="156" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#59636e" font-size="12" font-weight="400" text-anchor="middle" xml:space="preserve">负责 DNS 与 HTTPS 出口</text>
+<path d="M732 136H778" stroke="#0b7a6a" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="782" y="40" width="162" height="192" rx="14" fill="#f6f8fa" stroke="#d1d9e0" stroke-width="1.0"/>
+<text x="863" y="72" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#1f2328" font-size="16" font-weight="700" text-anchor="middle" xml:space="preserve">互联网</text>
+<text x="863" y="104" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#59636e" font-size="12.5" font-weight="400" text-anchor="middle" xml:space="preserve">Anthropic API</text>
+<text x="863" y="130" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#59636e" font-size="12.5" font-weight="400" text-anchor="middle" xml:space="preserve">GitHub</text>
+<text x="863" y="156" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#59636e" font-size="12.5" font-weight="400" text-anchor="middle" xml:space="preserve">npm · PyPI</text>
+<text x="863" y="182" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#59636e" font-size="12.5" font-weight="400" text-anchor="middle" xml:space="preserve">其他 HTTPS 网站</text>
+<path d="M129 168V240" stroke="#c62a2f" stroke-width="2" stroke-dasharray="5 4"/>
+<path d="M129 240V292H863V232" fill="none" stroke="#c62a2f" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.35"/>
+<circle cx="129" cy="240" r="11" fill="#c62a2f"/>
+<path d="M124 235L134 245M134 235L124 245" stroke="#fdeceb" stroke-width="2.2" stroke-linecap="round"/>
+<text x="496" y="316" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#c62a2f" font-size="13" font-weight="600" text-anchor="middle" xml:space="preserve">直连：已阻断。SSH 断开时也不会回退直连。</text>
+</svg>

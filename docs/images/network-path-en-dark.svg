@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="336" viewBox="0 0 960 336" role="img" aria-label="VPS Route network path">
+<title>VPS Route network path</title>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 1L10 5L0 9z" fill="#3fc1a5"/></marker></defs>
+<rect x="16" y="16" width="404" height="244" rx="14" fill="#151b23" stroke="#3d444d" stroke-width="1.0"/>
+<text x="36" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12" font-weight="600" text-anchor="start" xml:space="preserve" letter-spacing="1.2">YOUR COMPUTER</text>
+<rect x="36" y="60" width="364" height="180" rx="12" fill="#0f2b27" stroke="#3fc1a5" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="54" y="86" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#3fc1a5" font-size="12" font-weight="600" text-anchor="start" xml:space="preserve">Isolated sandbox · no network route out</text>
+<rect x="54" y="104" width="150" height="64" rx="10" fill="#0d1117" stroke="#3d444d" stroke-width="1.0"/>
+<text x="129" y="132" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#e6edf3" font-size="15" font-weight="600" text-anchor="middle" xml:space="preserve">Claude Code</text>
+<text x="129" y="152" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12" font-weight="400" text-anchor="middle" xml:space="preserve">official CLI</text>
+<rect x="232" y="104" width="150" height="64" rx="10" fill="#0d1117" stroke="#3d444d" stroke-width="1.0"/>
+<text x="307" y="132" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#e6edf3" font-size="15" font-weight="600" text-anchor="middle" xml:space="preserve">Local proxy</text>
+<text x="307" y="152" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" fill="#9198a1" font-size="11.5" font-weight="400" text-anchor="middle" xml:space="preserve">127.0.0.1:17878</text>
+<path d="M204 136H226" stroke="#3fc1a5" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="150" y="216" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12" font-weight="400" text-anchor="start" xml:space="preserve">Separate login, history and skills</text>
+<path d="M382 136H548" stroke="#3fc1a5" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="436" y="123" width="60" height="26" rx="13" fill="#3fc1a5"/>
+<rect x="446" y="133" width="12" height="9" rx="2" fill="#06231e"/><path d="M449 133v-2a3 3 0 0 1 6 0v2" fill="none" stroke="#06231e" stroke-width="1.8"/>
+<text x="479" y="141" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" fill="#06231e" font-size="11" font-weight="700" text-anchor="middle" xml:space="preserve">SSH</text>
+<text x="466" y="113" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#e6edf3" font-size="12" font-weight="600" text-anchor="middle" xml:space="preserve">SSH tunnel</text>
+<text x="466" y="168" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="11.5" font-weight="400" text-anchor="middle" xml:space="preserve">key + verified host</text>
+<rect x="552" y="78" width="180" height="116" rx="14" fill="#151b23" stroke="#3d444d" stroke-width="1.0"/>
+<text x="642" y="112" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#e6edf3" font-size="16" font-weight="700" text-anchor="middle" xml:space="preserve">Your VPS</text>
+<text x="642" y="136" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="middle" xml:space="preserve">connection service</text>
+<text x="642" y="156" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12" font-weight="400" text-anchor="middle" xml:space="preserve">DNS and HTTPS exit</text>
+<path d="M732 136H778" stroke="#3fc1a5" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="782" y="40" width="162" height="192" rx="14" fill="#151b23" stroke="#3d444d" stroke-width="1.0"/>
+<text x="863" y="72" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#e6edf3" font-size="16" font-weight="700" text-anchor="middle" xml:space="preserve">Internet</text>
+<text x="863" y="104" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="middle" xml:space="preserve">Anthropic API</text>
+<text x="863" y="130" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="middle" xml:space="preserve">GitHub</text>
+<text x="863" y="156" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="middle" xml:space="preserve">npm · PyPI</text>
+<text x="863" y="182" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="middle" xml:space="preserve">other HTTPS sites</text>
+<path d="M129 168V240" stroke="#ff7b72" stroke-width="2" stroke-dasharray="5 4"/>
+<path d="M129 240V292H863V232" fill="none" stroke="#ff7b72" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.35"/>
+<circle cx="129" cy="240" r="11" fill="#ff7b72"/>
+<path d="M124 235L134 245M134 235L124 245" stroke="#3a1a1a" stroke-width="2.2" stroke-linecap="round"/>
+<text x="496" y="316" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#ff7b72" font-size="13" font-weight="600" text-anchor="middle" xml:space="preserve">Direct connection: blocked. No fallback, even while SSH is down.</text>
+</svg>

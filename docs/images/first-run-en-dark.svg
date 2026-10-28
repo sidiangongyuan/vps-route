@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="344" viewBox="0 0 960 344" role="img" aria-label="First-time setup in six commands">
+<title>First-time setup in six commands</title>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 1L10 5L0 9z" fill="#3fc1a5"/></marker></defs>
+<path d="M306 82H330" stroke="#3fc1a5" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M628 82H652" stroke="#3fc1a5" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M306 262H330" stroke="#3fc1a5" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M628 262H652" stroke="#3fc1a5" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M802 148V168H158V188" fill="none" stroke="#3fc1a5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="16" y="16" width="284" height="132" rx="12" fill="#151b23" stroke="#3d444d" stroke-width="1"/>
+<circle cx="44" cy="44" r="13" fill="#3fc1a5"/>
+<text x="44" y="49" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#06231e" font-size="13" font-weight="700" text-anchor="middle" xml:space="preserve">1</text>
+<text x="66" y="49" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#e6edf3" font-size="15" font-weight="700" text-anchor="start" xml:space="preserve">Configure</text>
+<rect x="217.2" y="32" width="66.8" height="22" rx="11" fill="#1f2630"/>
+<text x="250.6" y="47" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="11.5" font-weight="600" text-anchor="middle" xml:space="preserve">one-time</text>
+<rect x="30" y="66" width="256" height="28" rx="6" fill="#1f2630"/>
+<text x="42" y="85" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" fill="#e6edf3" font-size="13" font-weight="500" text-anchor="start" xml:space="preserve">vps-route init</text>
+<text x="32" y="116" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="start" xml:space="preserve">Enter your VPS address, SSH user</text>
+<text x="32" y="135" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="start" xml:space="preserve">and key. Creates a separate profile.</text>
+<rect x="338" y="16" width="284" height="132" rx="12" fill="#151b23" stroke="#3d444d" stroke-width="1"/>
+<circle cx="366" cy="44" r="13" fill="#3fc1a5"/>
+<text x="366" y="49" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#06231e" font-size="13" font-weight="700" text-anchor="middle" xml:space="preserve">2</text>
+<text x="388" y="49" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#e6edf3" font-size="15" font-weight="700" text-anchor="start" xml:space="preserve">Deploy</text>
+<rect x="539.2" y="32" width="66.8" height="22" rx="11" fill="#1f2630"/>
+<text x="572.6" y="47" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="11.5" font-weight="600" text-anchor="middle" xml:space="preserve">one-time</text>
+<rect x="352" y="66" width="256" height="28" rx="6" fill="#1f2630"/>
+<text x="364" y="85" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" fill="#e6edf3" font-size="13" font-weight="500" text-anchor="start" xml:space="preserve">vps-route setup-vps --apply</text>
+<text x="354" y="116" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="start" xml:space="preserve">Installs a small connection</text>
+<text x="354" y="135" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="start" xml:space="preserve">service on your VPS over SSH.</text>
+<rect x="660" y="16" width="284" height="132" rx="12" fill="#151b23" stroke="#3d444d" stroke-width="1"/>
+<circle cx="688" cy="44" r="13" fill="#3fc1a5"/>
+<text x="688" y="49" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#06231e" font-size="13" font-weight="700" text-anchor="middle" xml:space="preserve">3</text>
+<text x="710" y="49" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#e6edf3" font-size="15" font-weight="700" text-anchor="start" xml:space="preserve">Check</text>
+<rect x="861.2" y="32" width="66.8" height="22" rx="11" fill="#1f2630"/>
+<text x="894.6" y="47" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="11.5" font-weight="600" text-anchor="middle" xml:space="preserve">one-time</text>
+<rect x="674" y="66" width="256" height="28" rx="6" fill="#1f2630"/>
+<text x="686" y="85" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" fill="#e6edf3" font-size="13" font-weight="500" text-anchor="start" xml:space="preserve">vps-route doctor --connect</text>
+<text x="676" y="116" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="start" xml:space="preserve">Tests SSH and HTTPS through</text>
+<text x="676" y="135" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="start" xml:space="preserve">the VPS and shows the exit IP.</text>
+<rect x="16" y="196" width="284" height="132" rx="12" fill="#151b23" stroke="#3d444d" stroke-width="1"/>
+<circle cx="44" cy="224" r="13" fill="#3fc1a5"/>
+<text x="44" y="229" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#06231e" font-size="13" font-weight="700" text-anchor="middle" xml:space="preserve">4</text>
+<text x="66" y="229" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#e6edf3" font-size="15" font-weight="700" text-anchor="start" xml:space="preserve">Install</text>
+<rect x="217.2" y="212" width="66.8" height="22" rx="11" fill="#1f2630"/>
+<text x="250.6" y="227" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="11.5" font-weight="600" text-anchor="middle" xml:space="preserve">one-time</text>
+<rect x="30" y="246" width="256" height="28" rx="6" fill="#1f2630"/>
+<text x="42" y="265" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" fill="#e6edf3" font-size="13" font-weight="500" text-anchor="start" xml:space="preserve">vps-route install</text>
+<text x="32" y="296" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="start" xml:space="preserve">Downloads official Claude Code</text>
+<text x="32" y="315" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="start" xml:space="preserve">through the VPS into the profile.</text>
+<rect x="338" y="196" width="284" height="132" rx="12" fill="#151b23" stroke="#3d444d" stroke-width="1"/>
+<circle cx="366" cy="224" r="13" fill="#3fc1a5"/>
+<text x="366" y="229" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#06231e" font-size="13" font-weight="700" text-anchor="middle" xml:space="preserve">5</text>
+<text x="388" y="229" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#e6edf3" font-size="15" font-weight="700" text-anchor="start" xml:space="preserve">Log in</text>
+<rect x="539.2" y="212" width="66.8" height="22" rx="11" fill="#1f2630"/>
+<text x="572.6" y="227" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="11.5" font-weight="600" text-anchor="middle" xml:space="preserve">one-time</text>
+<rect x="352" y="246" width="256" height="28" rx="6" fill="#1f2630"/>
+<text x="364" y="265" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" fill="#e6edf3" font-size="13" font-weight="500" text-anchor="start" xml:space="preserve">vps-route auth login</text>
+<text x="354" y="296" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="start" xml:space="preserve">Open the printed URL in a browser,</text>
+<text x="354" y="315" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="start" xml:space="preserve">then paste the code back.</text>
+<rect x="660" y="196" width="284" height="132" rx="12" fill="#0f2b27" stroke="#3fc1a5" stroke-width="1.5"/>
+<circle cx="688" cy="224" r="13" fill="#3fc1a5"/>
+<text x="688" y="229" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#06231e" font-size="13" font-weight="700" text-anchor="middle" xml:space="preserve">6</text>
+<text x="710" y="229" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#e6edf3" font-size="15" font-weight="700" text-anchor="start" xml:space="preserve">Run</text>
+<rect x="854.6" y="212" width="73.4" height="22" rx="11" fill="#0d1117" stroke="#3fc1a5" stroke-width="1.0"/>
+<text x="891.3000000000001" y="227" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#3fc1a5" font-size="11.5" font-weight="600" text-anchor="middle" xml:space="preserve">every day</text>
+<rect x="674" y="246" width="256" height="28" rx="6" fill="#0d1117"/>
+<text x="686" y="265" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" fill="#e6edf3" font-size="13" font-weight="500" text-anchor="start" xml:space="preserve">vps-route run</text>
+<text x="676" y="296" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="start" xml:space="preserve">Starts Claude in your project.</text>
+<text x="676" y="315" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif" fill="#9198a1" font-size="12.5" font-weight="400" text-anchor="start" xml:space="preserve">This is the only daily command.</text>
+</svg>
