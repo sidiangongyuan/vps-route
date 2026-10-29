@@ -8,7 +8,7 @@
   <img alt="Version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-0b7a6a">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-0b7a6a">
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-0b7a6a">
-  <img alt="Platforms: Linux and macOS" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-0b7a6a">
+  <img alt="Platforms: Linux and macOS" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows%20WSL2-0b7a6a">
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 
 ## Why VPS Route
 
-- **One way out.** Claude Code and every command it runs live in a network namespace with
+- **One way out by default.** Claude Code and its Linux commands live in a network namespace with
   no route to the internet. The only exit is a local proxy, carried over SSH to your VPS.
 - **No silent fallback.** If SSH drops, your session stays open while VPS Route reconnects
   to the same VPS. Nothing is ever sent directly from your computer.
@@ -39,7 +39,14 @@
 | --- | --- |
 | Linux | Supported. Verified on Ubuntu 22.04; other distributions are untested. |
 | macOS | Supported on the separately maintained [`macos-support`](https://github.com/sidiangongyuan/vps-route/tree/macos-support) branch. See [macOS](#macos). |
-| Windows | Not supported. |
+| Windows (WSL2) | Supported on this branch; verified with Ubuntu 22.04. See [Windows](#windows-wsl2). |
+
+## Windows (WSL2)
+
+Install and run this branch inside WSL2 Ubuntu; see the [Chinese Windows guide](docs/WINDOWS.zh-CN.md).
+Default mode isolates Windows execution, runtimes and drive files outside the selected project.
+Explicit `vps-route run --windows` enables Windows programs and WSLg. Those host programs
+use Windows networking and user permissions; the Linux Claude process keeps its VPS route.
 
 ## Requirements
 

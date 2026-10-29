@@ -8,7 +8,7 @@
   <img alt="版本 0.4.0" src="https://img.shields.io/badge/version-0.4.0-0b7a6a">
   <img alt="许可证 MIT" src="https://img.shields.io/badge/license-MIT-0b7a6a">
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-0b7a6a">
-  <img alt="平台 Linux 和 macOS" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-0b7a6a">
+  <img alt="平台 Linux 和 macOS" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows%20WSL2-0b7a6a">
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 
 ## 为什么用 VPS Route
 
-- **只有一个出口。** Claude Code 和它执行的每条命令都运行在一个没有外网路由的网络命名空间里，
+- **默认只有一个出口。** Claude Code 和它执行的 Linux 命令运行在一个没有外网路由的网络命名空间里，
   唯一的出口是本机代理，经 SSH 连到你的 VPS。
 - **断线不回退直连。** SSH 断开时会话保持打开，VPS Route 在后台重连同一台 VPS。
   任何请求都不会从你的电脑直接发出。
@@ -38,7 +38,14 @@
 | --- | --- |
 | Linux | 支持。已在 Ubuntu 22.04 上验证，其他发行版未经测试。 |
 | macOS | 支持，位于单独维护的 [`macos-support`](https://github.com/sidiangongyuan/vps-route/tree/macos-support) 分支，见 [macOS](#macos)。 |
-| Windows | 不支持。 |
+| Windows (WSL2) | 本分支支持，验证环境为 Ubuntu 22.04。见 [Windows](#windowswsl2)。 |
+
+## Windows（WSL2）
+
+在 WSL2 的 Ubuntu 中安装和运行本分支，参见 [Windows 中文指南](docs/WINDOWS.zh-CN.md)。
+默认模式隔离 Windows 执行、运行时和项目之外的盘符文件。
+显式使用 `vps-route run --windows` 可访问 Windows 程序与 WSLg；
+这些宿主程序使用 Windows 网络和用户权限，Linux Claude 进程继续经 VPS 联网。
 
 ## 需要准备
 

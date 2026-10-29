@@ -101,9 +101,17 @@ def doctor(config: Config | None, connect: bool, report: Path | None = None) -> 
             "runtime_probe_interval_seconds": config.runtime_probe_interval_seconds,
             "runtime_probe_failures": config.runtime_probe_failures,
         })
+    from . import isolation, wsl
+
+    try:
+        checks["wsl"] = wsl.summary()
+    except RouteError:
+        checks["wsl"] = {"platform": "wsl", "result": "inconclusive"}
+    checks["isolation"] = isolation.inspect(config)
     ready = all(checks[name] for name in ("ssh_installed", "private_network_namespace",
                                         "system_python_compatible", "curl_installed",
                                         "bash_installed"))
+    ready = ready and checks["isolation"]["passed"]
     if connect:
         if config is None:
             raise RouteError("connect_requires_config")
@@ -115,6 +123,7 @@ def doctor(config: Config | None, connect: bool, report: Path | None = None) -> 
             checks.update(connectivity_ok=False, network_probe_executed=False,
                           route_result="local_dependencies_unavailable",
                           diagnosis=connection_diagnosis("local_dependencies_unavailable", []))
+    checks["ready"] = ready and (not connect or checks.get("connectivity_ok", False))
     if report is not None:
         from .management import private_json
 
@@ -138,7 +147,7 @@ def system_python_compatible() -> bool:
 def launch(config: Config, workspace: Path, arguments: list[str], install: bool = False,
            login: bool = False, safe_mode: bool = False,
            verify_after: bool = False, skills_mode: bool = False,
-           orca: bool = False) -> int:
+           orca: bool = False, windows: bool = False) -> int:
     if install:
         from .install import installation_present
 
@@ -168,7 +177,7 @@ def launch(config: Config, workspace: Path, arguments: list[str], install: bool 
                 SessionLease(audit.run_id, config.profile, operation):
             return _launch(config, workspace, arguments, audit, install=install, login=login,
                            safe_mode=safe_mode, verify_after=verify_after, skills_mode=skills_mode,
-                           orca=orca)
+                           orca=orca, windows=windows)
     except RouteError as exc:
         audit.exit_code, audit.reason = 69, str(exc)
         raise
@@ -190,7 +199,7 @@ def launch(config: Config, workspace: Path, arguments: list[str], install: bool 
 def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditLog,
             install: bool = False, login: bool = False, safe_mode: bool = False,
             verify_after: bool = False, skills_mode: bool = False,
-            orca: bool = False) -> int:
+            orca: bool = False, windows: bool = False) -> int:
     if install:
         from .install import installation_present
 
@@ -199,6 +208,10 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                   "Use vps-route update to upgrade.")
             audit.exit_code, audit.reason = 0, "already_installed"
             return 0
+    from . import wsl
+
+    if wsl.version() == 1:
+        raise RouteError("wsl1_unsupported")
     if not namespace_available():
         raise RouteError("network_isolation_unavailable")
     if not system_python_compatible():
@@ -218,6 +231,13 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
         raise RouteError("profile_must_not_be_live_home")
     code, reason = 69, "route_not_started"
     keep_session = audit.operation == "run" and not install and not verify_after and not login
+    if windows and (not keep_session or arguments[:1] == ["setup-token"]):
+        raise RouteError("windows_interop_requires_daily_run")
+    if windows and wsl.version() != 2:
+        raise RouteError("windows_interop_requires_wsl2")
+    if windows:
+        print("vps-route: Windows programs and WSLg enabled; host programs use Windows "
+              "network and user permissions; Linux processes retain the VPS route.", flush=True)
     oauth_token = (read_token(profile_home)
                    if keep_session and arguments[:1] != ["setup-token"] else None)
     with tempfile.TemporaryDirectory(prefix="claude-route-") as directory:
@@ -255,6 +275,7 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
                 timezone=config.timezone,
                 reconnectable=keep_session,
                 orca_access=orca_access,
+                windows_interop=windows,
             )
             if oauth_token is not None:
                 environment["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
@@ -314,6 +335,10 @@ def _launch(config: Config, workspace: Path, arguments: list[str], audit: AuditL
 
 def network_test(config: Config) -> int:
     """Exercise the actual isolated route without installing or starting an AI CLI."""
+    from . import wsl
+
+    if wsl.version() == 1:
+        raise RouteError("wsl1_unsupported")
     if not namespace_available():
         raise RouteError("network_isolation_unavailable")
     with tempfile.TemporaryDirectory(prefix="claude-network-test-") as temporary:
@@ -586,6 +611,7 @@ def main() -> int:
         return launch(config, workspace, arguments, install=args.action == "install",
                       safe_mode=safe_mode, skills_mode=args.action == "run" and not safe_mode,
                       verify_after=args.action in {"install", "update"},
+                      windows=args.action == "run" and (args.windows or config.windows_interop),
                       orca=args.action == "run" and (
                           args.orca or (config.orca_control
                                         and bool(os.environ.get("ORCA_CLI_COMMAND")))

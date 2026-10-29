@@ -66,7 +66,8 @@ def private_mounts(paths: list[Path]) -> list[str]:
     return mounts
 
 
-def host_socket_mounts(home: Path, profile: Path, upstream: Path) -> list[str]:
+def host_socket_mounts(home: Path, profile: Path, upstream: Path,
+                       *, masked: tuple[Path, ...] = ()) -> list[str]:
     """Hide currently bound host sockets under newly visible file trees.
 
     This is not a generic hostile-code sandbox: do not place a host-side network
@@ -79,6 +80,8 @@ def host_socket_mounts(home: Path, profile: Path, upstream: Path) -> list[str]:
         if len(fields) < 8 or not fields[7].startswith('/'):
             continue
         path = Path(fields[7])
+        if any(path.is_relative_to(root) for root in masked):
+            continue
         if path == upstream or path.is_relative_to(profile):
             continue
         if not any(path.is_relative_to(root) for root in roots):

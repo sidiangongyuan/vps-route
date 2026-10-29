@@ -1,7 +1,7 @@
 # Security
 
 This page describes what VPS Route protects, where its protection ends, and how to report a
-problem. It applies to the Linux release on `main`. The macOS branch uses a different sandbox;
+problem. It covers the Linux sandbox and the WSL2 work on `windows-wsl`. The macOS branch uses a different sandbox;
 see its own guide.
 
 ## Reporting a vulnerability
@@ -177,3 +177,55 @@ vps-route doctor --connect --report ~/vps-route-report.json
 ```
 
 The report contains the observed public exit IP. Remove it before sharing if you prefer.
+
+
+## WSL2
+
+WSL2 uses the production Linux sandbox builder for every execution entry and for
+doctor probes. WSL1 is refused. The supported seccomp architectures are x86_64
+and aarch64; WSL fails closed on other architectures. The filter denies AF_VSOCK
+socket/socketpair using the low 32 bits of the domain, denies all three io_uring
+syscalls, and kills foreign ABIs including i386/x32. Descendants inherit the
+filter. The filter also denies mount APIs after bubblewrap constructs its tree;
+effective capabilities are dropped. Existing Linux namespace protections remain.
+
+Strict mode hides Windows drives outside the chosen project, /run/WSL, /mnt/wsl,
+/mnt/wslg and discovered runtime mount aliases. Research mode overlays whole
+Windows mounts before rebinding the project and makes the overlays read-only.
+This covers case-insensitive DrvFS lookup. Windows roots, user roots and sensitive
+workspace paths are rejected case-insensitively, including resolved symlinks and
+mount source aliases. Private profiles and launcher code require Linux storage.
+
+The binfmt F flag can retain /init across mount isolation. Blocking the runtime
+channels and AF_VSOCK therefore carries the execution boundary. Doctor copies a
+system cmd.exe into a disposable project, verifies the same copy on the host,
+and tests it inside the production sandbox. Missing or unsuccessful controls and
+timeouts remain inconclusive. Required inconclusive/unsupported probes prevent
+readiness. It also checks native/high-bit socket calls, filter inheritance,
+io_uring, capabilities, mount creation, IPv4/IPv6 routes, parent loopback canaries,
+and an approved fixture relay. The fixture uses no account or real host service.
+
+Explicit windows_interop enables Windows execution, Windows drive writes and
+WSLg display/audio endpoints during daily run. Windows processes use host
+networking and user permissions, including access to user-readable Windows
+credentials. They may start processes outside the Linux sandbox. Doctor reports
+windows_interop_enabled, host_execution_allowed and vps_only_guarantee=false.
+Linux processes retain their separate network namespace. Orca host control is
+reported independently. Account and maintenance entries keep the strict policy.
+
+Shared writable projects and broad Linux research directories require trust.
+A host watcher may execute changed files later; a newly created pathname Unix
+socket can grant host services or SCM_RIGHTS capabilities after startup. Socket
+masking is a startup snapshot. Credentials deliberately copied or hard-linked
+into a selected project remain inside that project's authorization. NTFS
+junctions, short-name aliases and relocated profile layouts require separate
+canary validation for each deployment. The tool retains its documented scope
+as a local workflow sandbox; these shared-file and host-service capabilities
+limit containment of actively hostile code.
+
+WSLg exposure grants display, clipboard and audio capabilities. Doctor records
+endpoint availability and never reads clipboard contents or records audio.
+An X11 fixture window was opened and closed locally. Wayland applications,
+audio, clipboard behavior, untested NAT deployments and ARM64 runtime behavior
+require additional platform validation. The verified host combination is
+documented in the local validation report.

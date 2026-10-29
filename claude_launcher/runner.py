@@ -27,6 +27,7 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from .config import Config
+from . import seccomp, wsl
 from .customizations import project_instruction_mounts, shared_skill_mounts
 from .filesystem import host_socket_mounts, private_mounts, private_paths, research_mounts
 from .orca_access import OrcaAccess
@@ -159,7 +160,7 @@ def bootstrap_proxy_options(config: Config) -> list[str]:
     address = urlsplit(config.ssh_http_proxy)
     proxy_command = shlex.join([
         executable, "-n", "-X", "connect", "-x",
-        f"{address.hostname}:{address.port}", "%h", "%p",
+        f"{wsl.proxy_host(address.hostname)}:{address.port}", "%h", "%p",
     ])
     return ["-o", "ProxyCommand=" + proxy_command]
 
@@ -302,8 +303,22 @@ def sandbox_command(
     timezone: str | None = None,
     reconnectable: bool = False,
     orca_access: OrcaAccess | None = None,
+    windows_interop: bool = False,
 ) -> tuple[list[str], dict[str, str]]:
     """Create only mount/namespace changes scoped to the launched child."""
+    wsl_version = wsl.version()
+    if wsl_version == 1:
+        raise RouteError("wsl1_unsupported")
+    if windows_interop and wsl_version != 2:
+        raise RouteError("windows_interop_requires_wsl2")
+    if wsl_version and not seccomp.supported():
+        raise RouteError("wsl_seccomp_architecture_unsupported")
+    inventory = wsl.mounts() if wsl_version else []
+    masked = wsl.mask_paths(inventory) if wsl_version and not windows_interop else []
+    if wsl_version:
+        wsl.validate_workspace(workspace, inventory)
+        if any(wsl.containing_mount(p.resolve(), inventory) for p in (profile_home, PACKAGE_DIR)):
+            raise RouteError("wsl_private_storage_requires_linux")
     profile_home = profile_home.resolve()
     workspace = workspace.resolve()
     live_home = Path.home().resolve()
@@ -324,7 +339,7 @@ def sandbox_command(
         raise RouteError("account_or_key_directory_is_not_a_workspace")
     args = [
         "bwrap", "--unshare-user", "--unshare-net", "--unshare-pid", "--unshare-ipc",
-        "--die-with-parent",
+        "--die-with-parent", "--cap-drop", "ALL",
     ]
     # Expose runtime libraries, not the host's whole filesystem and Unix sockets.
     for directory in ("/usr", "/bin", "/sbin", "/lib", "/lib64"):
@@ -340,6 +355,29 @@ def sandbox_command(
     ])
     if research_filesystem:
         args.extend(research_mounts(live_home))
+    applied_masks = []
+    for path in masked:
+        exposed_system_tree = any(path.is_relative_to(base)
+                                  for base in ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"))
+        if path.is_dir() and (research_filesystem or exposed_system_tree):
+            args.extend(["--tmpfs", str(path)])
+            applied_masks.append(path)
+    if windows_interop:
+        for mount in wsl.windows_mounts(inventory):
+            args.extend(["--bind", str(mount.target), str(mount.target)])
+        for path in ("/run/WSL", "/init", "/mnt/wslg"):
+            if Path(path).exists():
+                args.extend(["--ro-bind", path, path])
+        runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+        wayland = os.environ.get("WAYLAND_DISPLAY", "")
+        if runtime.startswith("/") and wayland and "/" not in wayland and wayland not in {".", ".."}:
+            endpoint = Path(runtime) / wayland
+            target = endpoint.resolve()
+            if target.is_relative_to("/mnt/wslg") and target.is_socket() and endpoint != target:
+                args.extend(["--perms", "0700", "--dir", runtime,
+                             "--ro-bind", str(target), str(endpoint)])
+        if Path("/mnt/wslg/.X11-unix").is_dir():
+            args.extend(["--ro-bind", "/mnt/wslg/.X11-unix", "/tmp/.X11-unix"])
     upstream = "/run/claude-launcher/upstream.sock"
     args.extend(["--dir", "/run/claude-launcher"])
     if reconnectable:
@@ -358,10 +396,14 @@ def sandbox_command(
         "--bind", str(profile_home), str(profile_home),
         "--bind", str(workspace), str(workspace),
     ])
+    extra_mount_start = len(args)
     if project_instructions:
-        args.extend(project_instruction_mounts(workspace, include_ancestors=research_filesystem))
+        args.extend(project_instruction_mounts(
+            workspace, include_ancestors=research_filesystem
+            and not wsl.containing_mount(workspace, inventory),
+        ))
     if research_filesystem:
-        args.extend(host_socket_mounts(live_home, profile_home, socket_path))
+        args.extend(host_socket_mounts(live_home, profile_home, socket_path, masked=tuple(masked)))
         args.extend(private_mounts(hidden))
         # .local is masked above. Expose only this profile again, never its archive siblings.
         args.extend(["--bind", str(profile_home), str(profile_home)])
@@ -391,6 +433,20 @@ def sandbox_command(
                 or not (texlive_bin / "pdflatex").is_file()):
             raise RouteError("invalid_texlive_installation")
         args.extend(["--ro-bind", str(texlive_root), str(texlive_root)])
+    if wsl_version and not windows_interop:
+        # Every extra Windows source must stay within the explicitly selected project.
+        for index, argument in enumerate(args):
+            if argument in {"--bind", "--ro-bind"}:
+                source = Path(args[index + 1]).resolve()
+                if index >= extra_mount_start:
+                    for runtime in wsl.runtime_paths(inventory):
+                        if source.is_relative_to(runtime) or runtime.is_relative_to(source):
+                            raise RouteError("wsl_runtime_directory_is_not_a_workspace")
+                if (wsl.containing_mount(source, inventory)
+                        and not source.is_relative_to(workspace)):
+                    raise RouteError("windows_extra_mount_outside_workspace")
+        for path in applied_masks:
+            args.extend(["--remount-ro", str(path)])
     args.extend([
         "--chdir", str(workspace), "--", "/usr/bin/python3",
         str(ENTRY_DIR / "sandbox_entry.py"), upstream, *command,
@@ -416,8 +472,14 @@ def sandbox_command(
         environment["TEXMFHOME"] = str(profile_home / "texmf")
         environment["TEXMFCACHE"] = environment["TEXMFVAR"]
     environment["PATH"] = ":".join([*path_entries, "/usr/local/bin", "/usr/bin", "/bin"])
+    if windows_interop:
+        environment.update(wsl.windows_environment(os.environ))
+        environment["PATH"] = ":".join([environment["PATH"], *wsl.windows_path(inventory, os.environ)])
     if login:
         environment["BROWSER"] = str(prepare_browser_hook(profile_home))
+    if seccomp.supported():
+        args = ["/usr/bin/python3", str(ENTRY_DIR / "filter_entry.py"),
+                "windows" if windows_interop else "default", *args]
     return args, environment
 
 

@@ -42,6 +42,7 @@ class Config:
     orca_control: bool = False
     # Extra HOME entry names or fnmatch patterns hidden when research_filesystem is on.
     private_home_entries: tuple[str, ...] = ()
+    windows_interop: bool = False
 
     @property
     def profile_home(self) -> Path:
@@ -95,6 +96,8 @@ class Config:
                     raise ValueError
             if not isinstance(config.research_filesystem, bool):
                 raise ValueError
+            if not isinstance(config.windows_interop, bool):
+                raise ValueError
             if not isinstance(config.orca_control, bool):
                 raise ValueError
             if config.timezone is not None:
@@ -130,7 +133,7 @@ class Config:
                     raise ValueError
                 bootstrap = urlsplit(config.ssh_http_proxy)
                 if (
-                    bootstrap.scheme != "http" or bootstrap.hostname != "127.0.0.1"
+                    bootstrap.scheme != "http" or bootstrap.hostname not in {"127.0.0.1", "windows-host"}
                     or bootstrap.port is None or not 1 <= bootstrap.port <= 65535
                     or bootstrap.username or bootstrap.password
                     or bootstrap.path not in ("", "/") or bootstrap.query or bootstrap.fragment

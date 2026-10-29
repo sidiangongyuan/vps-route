@@ -20,5 +20,6 @@
   "texlive_root": null,
   "research_filesystem": false,
   "orca_control": false,
+  "windows_interop": false,
   "private_home_entries": []
 }

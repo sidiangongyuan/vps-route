@@ -120,6 +120,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help="project directory (default: current directory)")
     run.add_argument("--safe-mode", action="store_true",
                      help="disable all customizations, for troubleshooting")
+    run.add_argument("--windows", action="store_true",
+                     help="allow Windows host programs and WSLg during daily run")
     run.add_argument("--orca", action="store_true",
                      help="allow local Orca runtime control, including host-side operations")
     run.add_argument("arguments", nargs=argparse.REMAINDER,

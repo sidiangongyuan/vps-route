@@ -278,3 +278,10 @@ vps-route uninstall
 要移除 VPS 上的服务，在 VPS 上执行
 `systemctl --user disable --now vps-route-connect.service`（root 用户去掉 `--user`），
 再删除 `~/.local/share/claude-launcher/server` 和对应的 unit 文件。
+
+## Windows 程序
+
+WSL2 中使用 `vps-route run --windows`，或为日常 run 设置 `windows_interop: true`。
+该选项默认关闭；开启后提供 Windows 程序和 WSLg 所需能力，宿主程序使用 Windows
+网络与用户权限。auth、install、update、network-test 保持严格策略。
+完整说明见 [Windows 指南](WINDOWS.zh-CN.md)。

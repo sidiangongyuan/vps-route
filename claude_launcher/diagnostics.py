@@ -14,11 +14,26 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .config import Config
+from .wsl import proxy_host
 from .runner import SSHTunnel, connectivity_check
 from .wire import RouteError, proxy_json, server_health
 
 
 HINTS = {
+    "wsl1_unsupported": "Convert this distribution to WSL2, then retry.",
+    "wsl_seccomp_architecture_unsupported": "WSL isolation supports x86_64 and aarch64.",
+    "windows_interop_requires_wsl2": "Use --windows inside a WSL2 distribution.",
+    "windows_interop_requires_daily_run": "Use Windows integration only for daily run tasks.",
+    "wsl_mount_inventory_unavailable": "Check access to /proc/self/mountinfo before starting.",
+    "wsl_default_gateway_unavailable": "Check the WSL NAT default route.",
+    "windows_host_proxy_requires_wsl2": "windows-host requires a WSL2 NAT network.",
+    "windows_host_proxy_requires_nat": "Use 127.0.0.1 in mirrored mode; windows-host requires confirmed NAT.",
+    "windows_broad_directory_is_not_a_workspace": "Choose a specific project below the Windows user directory.",
+    "windows_private_directory_is_not_a_workspace": "Choose a project outside Windows account and configuration directories.",
+    "wsl_runtime_directory_is_not_a_workspace": "Choose a project outside WSL shared runtime directories.",
+    "wsl_private_storage_requires_linux": "Keep the launcher and private profiles in the WSL Linux filesystem.",
+    "windows_extra_mount_outside_workspace": "Keep extra tool and skill sources in Linux storage or inside the selected project.",
+
     "invalid_setup_token_format": "Paste the full long-lived token printed by `claude setup-token`.",
     "setup_token_active; remove_local_token_before_browser_login": (
         "An imported token is active. Preview `vps-route auth remove-token`, run it with "
@@ -93,7 +108,7 @@ def _local_https_probe(config: Config, url: str) -> str:
     target = urlsplit(url)
     proxy = urlsplit(config.ssh_http_proxy) if config.ssh_http_proxy else None
     connection = http.client.HTTPSConnection(
-        proxy.hostname if proxy else target.hostname,
+        proxy_host(proxy.hostname) if proxy else target.hostname,
         proxy.port if proxy else 443,
         timeout=config.timeout_seconds,
         context=ssl.create_default_context(),
@@ -257,7 +272,7 @@ def connect_diagnostics(config: Config) -> dict:
         if config.ssh_http_proxy:
             address = urlsplit(config.ssh_http_proxy)
             try:
-                with socket.create_connection(("127.0.0.1", address.port),
+                with socket.create_connection((proxy_host(address.hostname), address.port),
                                               timeout=config.timeout_seconds):
                     pass
             except OSError:

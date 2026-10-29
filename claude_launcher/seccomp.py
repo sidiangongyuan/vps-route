@@ -79,5 +79,13 @@ def build(*, block_vsock: bool = True, machine: str | None = None) -> bytes:
             _instruction(_JEQ, 0, 1, number),
             _instruction(_RET, 0, 0, _ERRNO | errno.ENOSYS),
         ]
+    # bwrap loads the filter after constructing its mount tree. Descendants
+    # retain file access but cannot create or rearrange mounts in nested userns.
+    mount_calls = (165, 166) if machine == "x86_64" else (40, 39)
+    for number in (*mount_calls, 428, 429, 430, 431, 432, 433, 442):
+        program += [
+            _instruction(_JEQ, 0, 1, number),
+            _instruction(_RET, 0, 0, _ERRNO | errno.EPERM),
+        ]
     program.append(_instruction(_RET, 0, 0, _ALLOW))
     return b"".join(program)
