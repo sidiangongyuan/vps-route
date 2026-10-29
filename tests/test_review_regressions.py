@@ -203,6 +203,17 @@ class DoctorPolicyTests(unittest.TestCase):
             self.assertEqual(list(workspace.iterdir()), [workspace / "keep.txt"])
             self.assertEqual((workspace / "keep.txt").read_text(), "unchanged")
 
+    def test_fresh_maintenance_profile_is_private_without_changing_existing_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / "new-parent/profile"
+            with patch.object(Config, "profile_home", new_callable=lambda: property(lambda c: profile)):
+                workspace = cli.private_workspace(config())
+                self.assertEqual(profile.stat().st_mode & 0o777, 0o700)
+                self.assertEqual(workspace.stat().st_mode & 0o777, 0o700)
+                profile.chmod(0o750)
+                cli.private_workspace(config())
+                self.assertEqual(profile.stat().st_mode & 0o777, 0o750)
+
     def test_workspace_refusal_is_separate_from_fixture(self):
         result = isolation.workspace_plan(config(), Path("/no-such-fixture-project"))
         self.assertFalse(result["passed"])

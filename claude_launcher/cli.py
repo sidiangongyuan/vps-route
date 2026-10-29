@@ -374,8 +374,11 @@ def network_test(config: Config) -> int:
 
 def private_workspace(config: Config) -> Path:
     """Keep auth and maintenance commands away from projects and the live HOME."""
+    # mkdir(parents=True) uses the process umask for intermediate directories.
+    # Create a fresh profile explicitly so maintenance never starts with a 0755 HOME.
+    config.profile_home.mkdir(parents=True, mode=0o700, exist_ok=True)
     workspace = config.profile_home / "auth-workspace"
-    workspace.mkdir(parents=True, mode=0o700, exist_ok=True)
+    workspace.mkdir(mode=0o700, exist_ok=True)
     return workspace
 
 
