@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 from claude_launcher import wsl
 from claude_launcher.runner import sandbox_command
+from claude_launcher.wire import RouteError
 
 
 @unittest.skipUnless(shutil.which("bwrap"), "bubblewrap required")
@@ -146,6 +147,16 @@ print('mount_api_blocked')
             control = subprocess.run([str(exe), "/c", "echo", "vps-route-probe"],
                                      capture_output=True, timeout=5)
             self.assertEqual(control.returncode, 0)
+            def windows_path(path):
+                return subprocess.check_output(["wslpath", "-w", str(path)], text=True).strip()
+            for link in (root / "project-link", project / "outside"):
+                junction = subprocess.run(
+                    [str(source), "/c", "mklink", "/J", windows_path(link),
+                     windows_path(root / "AppData")], capture_output=True, timeout=5)
+                self.assertEqual(junction.returncode, 0)
+            self.assertEqual((root / "project-link").resolve(), root / "AppData")
+            with self.assertRaises(RouteError):
+                wsl.validate_workspace(root / "project-link", wsl.mounts())
             for research in (False, True):
                 with socket.socket(socket.AF_UNIX) as sock:
                     address = profile / ("research.sock" if research else "default.sock")
@@ -159,6 +170,7 @@ assert Path('source.txt').read_text() == 'fixture-source'
 Path('result.txt').write_text('fixture-output')
 assert not (root/'AppData/canary').exists()
 assert not (root/'APPDATA/canary').exists()
+assert not Path('outside/canary').exists()
 r=subprocess.run(['./cmd.exe','/c','echo','vps-route-probe'],capture_output=True,timeout=5)
 assert r.returncode != 0 and b'vps-route-probe' not in r.stdout
 """

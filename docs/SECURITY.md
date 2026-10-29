@@ -218,7 +218,9 @@ A host watcher may execute changed files later; a newly created pathname Unix
 socket can grant host services or SCM_RIGHTS capabilities after startup. Socket
 masking is a startup snapshot. Credentials deliberately copied or hard-linked
 into a selected project remain inside that project's authorization. NTFS
-junctions, short-name aliases and relocated profile layouts require separate
+junction canaries were verified locally: redirected private workspaces are rejected
+and project links cannot read masked neighbors. Short-name path components are
+conservatively refused. Additional relocated profile layouts require separate
 canary validation for each deployment. The tool retains its documented scope
 as a local workflow sandbox; these shared-file and host-service capabilities
 limit containment of actively hostile code.
