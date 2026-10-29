@@ -174,16 +174,19 @@ class DiagnosticTests(unittest.TestCase):
                 self.assertEqual(result["fault_domain"], "vps_to_destination")
                 self.assertFalse(result["cause_confirmed"])
 
-    def test_missing_local_dependencies_have_a_diagnosis_without_network_access(self):
+    def test_missing_local_dependencies_do_not_skip_requested_connection_check(self):
         with patch.object(cli, "namespace_available", return_value=False), \
                 patch.object(cli, "system_python_compatible", return_value=True), \
-                patch("claude_launcher.diagnostics.connect_diagnostics") as connect, \
+                patch("claude_launcher.diagnostics.connect_diagnostics",
+                      return_value={"connectivity_ok": True}) as connect, \
                 contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.doctor(self.config, connect=True), 69)
         result = json.loads(output.getvalue())
-        self.assertFalse(result["network_probe_executed"])
-        self.assertEqual(result["diagnosis"]["fault_domain"], "local_environment")
-        connect.assert_not_called()
+        self.assertTrue(result["network_probe_executed"])
+        self.assertTrue(result["connectivity_ok"])
+        self.assertFalse(result["private_network_namespace"])
+        self.assertFalse(result["ready"])
+        connect.assert_called_once_with(self.config)
 
     def test_protocol_mismatch_blocks_exit_probe_and_does_not_deploy(self):
         with patch("claude_launcher.diagnostics.SSHTunnel"), patch(

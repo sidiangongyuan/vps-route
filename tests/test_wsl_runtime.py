@@ -113,17 +113,17 @@ for name in ('early.sock','late.sock'):
                     thread.join(timeout=6)
                 self.assertEqual(errors, [])
 
-    def test_mount_api_denied_after_namespace_setup(self):
+    def test_nested_bubblewrap_in_linux_and_wsl_builder_paths(self):
         code = """
-import ctypes,errno
-c=ctypes.CDLL(None,use_errno=True)
-for nr in (428,429,430,431,432,433,442):
-    assert c.syscall(nr,0,0,0,0,0)==-1 and ctypes.get_errno()==errno.EPERM
-print('mount_api_blocked')
+import subprocess
+p=subprocess.run(['bwrap','--unshare-user','--ro-bind','/','/','--','/bin/true'],
+                 capture_output=True)
+assert p.returncode==0,p.stderr
 """
-        result = self.sandbox(code)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(b"mount_api_blocked", result.stdout)
+        for detected in (None, 2):
+            with self.subTest(platform=detected), patch.object(wsl, "version", return_value=detected):
+                result = self.sandbox(code)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     @unittest.skipUnless(os.environ.get("VPS_ROUTE_WINDOWS_TEST_ROOT"),
                          "set an owned disposable Windows test root")
@@ -144,14 +144,14 @@ print('mount_api_blocked')
             exe = project / "cmd.exe"
             shutil.copyfile(source, exe)
             exe.chmod(0o700)
-            control = subprocess.run([str(exe), "/c", "echo", "vps-route-probe"],
+            control = subprocess.run([str(exe), "/d", "/c", "echo", "vps-route-probe"],
                                      capture_output=True, timeout=5)
             self.assertEqual(control.returncode, 0)
             def windows_path(path):
                 return subprocess.check_output(["wslpath", "-w", str(path)], text=True).strip()
             for link in (root / "project-link", project / "outside"):
                 junction = subprocess.run(
-                    [str(source), "/c", "mklink", "/J", windows_path(link),
+                    [str(source), "/d", "/c", "mklink", "/J", windows_path(link),
                      windows_path(root / "AppData")], capture_output=True, timeout=5)
                 self.assertEqual(junction.returncode, 0)
             self.assertEqual((root / "project-link").resolve(), root / "AppData")
@@ -171,7 +171,7 @@ Path('result.txt').write_text('fixture-output')
 assert not (root/'AppData/canary').exists()
 assert not (root/'APPDATA/canary').exists()
 assert not Path('outside/canary').exists()
-r=subprocess.run(['./cmd.exe','/c','echo','vps-route-probe'],capture_output=True,timeout=5)
+r=subprocess.run(['./cmd.exe','/d','/c','echo','vps-route-probe'],capture_output=True,timeout=5)
 assert r.returncode != 0 and b'vps-route-probe' not in r.stdout
 """
                     args, env = sandbox_command(address, profile, project,

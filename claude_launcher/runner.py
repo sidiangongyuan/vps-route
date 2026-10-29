@@ -356,12 +356,18 @@ def sandbox_command(
     if research_filesystem:
         args.extend(research_mounts(live_home))
     applied_masks = []
+    directory_masks = []
+    file_masks = []
     for path in masked:
-        exposed_system_tree = any(path.is_relative_to(base)
-                                  for base in ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"))
-        if path.is_dir() and (research_filesystem or exposed_system_tree):
+        if path.is_dir():
             args.extend(["--tmpfs", str(path)])
-            applied_masks.append(path)
+            directory_masks.append(path)
+        elif path.exists():
+            args.extend(["--ro-bind", "/dev/null", str(path)])
+            file_masks.append(path)
+        else:
+            continue
+        applied_masks.append(path)
     if windows_interop:
         for mount in wsl.windows_mounts(inventory):
             args.extend(["--bind", str(mount.target), str(mount.target)])
@@ -403,7 +409,7 @@ def sandbox_command(
             and not wsl.containing_mount(workspace, inventory),
         ))
     if research_filesystem:
-        args.extend(host_socket_mounts(live_home, profile_home, socket_path, masked=tuple(masked)))
+        args.extend(host_socket_mounts(live_home, profile_home, socket_path, masked=tuple(applied_masks)))
         args.extend(private_mounts(hidden))
         # .local is masked above. Expose only this profile again, never its archive siblings.
         args.extend(["--bind", str(profile_home), str(profile_home)])
@@ -440,12 +446,20 @@ def sandbox_command(
                 source = Path(args[index + 1]).resolve()
                 if index >= extra_mount_start:
                     for runtime in wsl.runtime_paths(inventory):
-                        if source.is_relative_to(runtime) or runtime.is_relative_to(source):
+                        covered_file = (runtime in file_masks and runtime != source
+                                        and runtime.is_relative_to(source)
+                                        and args[index + 2] == str(source))
+                        if not covered_file and (source.is_relative_to(runtime)
+                                                 or runtime.is_relative_to(source)):
                             raise RouteError("wsl_runtime_directory_is_not_a_workspace")
                 if (wsl.containing_mount(source, inventory)
                         and not source.is_relative_to(workspace)):
                     raise RouteError("windows_extra_mount_outside_workspace")
-        for path in applied_masks:
+        # Reapply file aliases after all parent binds so extra mounts cannot
+        # reveal them again. Directory masks precede the selected workspace.
+        for path in file_masks:
+            args.extend(["--ro-bind", "/dev/null", str(path)])
+        for path in directory_masks:
             args.extend(["--remount-ro", str(path)])
     args.extend([
         "--chdir", str(workspace), "--", "/usr/bin/python3",

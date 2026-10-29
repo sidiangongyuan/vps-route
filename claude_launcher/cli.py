@@ -52,7 +52,8 @@ def namespace_available() -> bool:
         return False
 
 
-def doctor(config: Config | None, connect: bool, report: Path | None = None) -> int:
+def doctor(config: Config | None, connect: bool, report: Path | None = None,
+           *, windows: bool = False, workspace: Path | None = None) -> int:
     checks = {
         "ssh_installed": shutil.which("ssh") is not None,
         "system_python_compatible": system_python_compatible(),
@@ -107,22 +108,22 @@ def doctor(config: Config | None, connect: bool, report: Path | None = None) -> 
         checks["wsl"] = wsl.summary()
     except RouteError:
         checks["wsl"] = {"platform": "wsl", "result": "inconclusive"}
-    checks["isolation"] = isolation.inspect(config)
+    checks["isolation"] = isolation.inspect(config, windows=windows)
     ready = all(checks[name] for name in ("ssh_installed", "private_network_namespace",
                                         "system_python_compatible", "curl_installed",
                                         "bash_installed"))
-    ready = ready and checks["isolation"]["passed"]
+    if workspace is not None:
+        checks["workspace"] = isolation.workspace_plan(config, workspace, windows=windows)
+    ready = (ready and checks["isolation"]["passed"]
+             and checks.get("workspace", {}).get("passed", True))
     if connect:
         if config is None:
             raise RouteError("connect_requires_config")
-        from .diagnostics import connect_diagnostics, connection_diagnosis
+        from .diagnostics import connect_diagnostics
 
-        if ready:
-            checks.update(connect_diagnostics(config))
-        else:
-            checks.update(connectivity_ok=False, network_probe_executed=False,
-                          route_result="local_dependencies_unavailable",
-                          diagnosis=connection_diagnosis("local_dependencies_unavailable", []))
+        # Connectivity is independently useful even when fixture/workspace policy
+        # checks fail. Each result remains visible; readiness requires both.
+        checks.update(connect_diagnostics(config))
     checks["ready"] = ready and (not connect or checks.get("connectivity_ok", False))
     if report is not None:
         from .management import private_json
@@ -489,7 +490,8 @@ def main() -> int:
         path = args.config or default_config_path()
         config = Config.load(path) if args.config or path.exists() else None
         if args.action == "doctor":
-            return doctor(config, args.connect, args.report)
+            return doctor(config, args.connect, args.report,
+                          windows=args.windows, workspace=args.workspace)
         if config is None:
             raise RouteError("config_required; run_vps-route_init")
         if args.action == "auth":

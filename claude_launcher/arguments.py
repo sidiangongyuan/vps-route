@@ -54,6 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
                                     help="check local requirements; --connect also tests the VPS")
     inspect.add_argument("--connect", action="store_true",
                          help="also test SSH and HTTPS through your VPS")
+    inspect.add_argument("--windows", action="store_true",
+                         help="explicitly probe Windows host execution and WSLg")
+    inspect.add_argument("--workspace", type=Path,
+                         help="check the daily-run mount plan for this project without launching Claude")
     inspect.add_argument("--report", type=Path,
                          help="write a sanitized JSON report for troubleshooting; no account data")
     configuration = subparsers.add_parser("config", help="show, validate or change the config")

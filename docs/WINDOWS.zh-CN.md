@@ -10,19 +10,20 @@ Windows 支持位于 `windows-wsl` 分支，使用 WSL2 内的 Linux 沙箱。�
 wsl --install -d Ubuntu-22.04
 ```
 
-在 Ubuntu 终端安装依赖和本分支：
+在 Ubuntu 终端安装依赖和正式版本：
 
 ```bash
 sudo apt-get update
-sudo apt-get install python3 python3-venv pipx git bubblewrap openssh-client netcat-openbsd curl ca-certificates
-git clone -b windows-wsl https://github.com/sidiangongyuan/vps-route.git ~/vps-route-dev
-pipx install -e ~/vps-route-dev
+sudo apt-get install python3 python3-venv pipx git bubblewrap socat openssh-client netcat-openbsd curl ca-certificates
+pipx install "git+https://github.com/sidiangongyuan/vps-route.git@v0.5.0"
 pipx ensurepath
 ```
 
-重新打开 Ubuntu 终端。首次配置使用 `vps-route init`，填入自己的连接信息、专用密钥和已经独立核对的 known_hosts。开发副本和 profile 应存放在 WSL Linux 文件系统。
+v0.5.0 发布之前，把安装地址中的 `@v0.5.0` 换成 `@windows-wsl`。可选安装 `zstd`，让官方 Claude 安装器使用其支持的压缩包。
 
-已有 VPS 服务可以直接运行 `vps-route doctor --connect`、`vps-route install` 和 `vps-route auth login`。登录时在 Windows 浏览器打开终端显示的完整官方授权网址，再把授权 code 粘贴回同一终端。人工打开浏览器使用 Windows 的联网路径。
+重新打开 Ubuntu 终端。首次配置使用 `vps-route init`，填入自己的连接信息、专用密钥和已经独立核对的 known_hosts。程序和 profile 应放在 WSL 的 Linux 文件系统中。
+
+已有 VPS 服务可以直接运行 `vps-route doctor --connect`、`vps-route install` 和 `vps-route auth login`。登录时在 Windows 浏览器打开终端显示的完整官方授权网址，再把授权 code 粘贴回同一终端。浏览器通过 Windows 当前的网络连接访问授权页面。已有 setup token 时，可在 Ubuntu 终端运行 `vps-route auth import-token` 并粘贴到隐藏提示中。
 
 ## SSH 与 Clash Verge
 
@@ -63,21 +64,25 @@ vps-route config set windows_interop true --apply
 vps-route config set windows_interop false --apply
 ```
 
-开启后提供 Windows 盘读写、Windows PATH、互操作运行时和 WSLg 显示/音频端点。Windows 程序使用 Windows 用户权限和网络，也能访问该用户可访问的 Windows 文件。显示端点还具有剪贴板、音频等宿主能力。此模式的 `vps_only_guarantee` 为 false，Linux Claude 进程本身仍在原有网络命名空间里。WSLg 的 X11 测试窗口已在本机显示并关闭，Wayland 用户端点也有单独映射。Wayland 应用、音频和剪贴板操作需要相应应用与单独验证；探测不会读取剪贴板或录音。
+开启后提供 Windows 盘读写、Windows PATH、互操作运行时，以及整个 `/mnt/wslg` 共享树的只读挂载；同时接入 X11 和用户目录下的 Wayland socket。Windows 程序使用 Windows 用户权限和网络，也能访问该用户可访问的 Windows 文件。显示端点还具有剪贴板、音频等宿主能力。此模式的 `vps_only_guarantee` 为 false，Linux Claude 进程本身仍在原有网络命名空间里。WSLg 的 X11 测试窗口已在本机显示并关闭，Wayland 用户端点也有单独映射。Wayland 应用、音频和剪贴板操作需要相应应用与单独验证；探测不会读取剪贴板或录音。
 
 开关用于日常 run；auth、install、update、network-test 和 setup-token 保持严格策略。在 WSL2 之外开启会报错。
 
 ## 研究模式
 
-`research_filesystem: true` 保留 Linux 资料目录的原有共享策略。在 WSL2 严格模式中，每个 Windows 盘及 WSL 共享运行时挂载都被空的只读层遮住，随后只重新开放选定项目。这可以覆盖 DrvFS 的大小写别名。宿主 socket 扫描跳过已遮住的目录。
+`research_filesystem: true` 保留 Linux 资料目录的原有共享策略。在 WSL2 严格模式中，每个 Windows 盘及 WSL 共享运行时挂载都被空的只读层遮住，随后只重新开放选定项目。这可以覆盖 DrvFS 的大小写别名。文件与 socket 形式的别名用 `/dev/null` 覆盖；宿主 socket 扫描只跳过已经实际安装的遮罩。
 
 研究模式仍允许较广的 Linux 文件共享。启动后创建的 Unix socket、主动传入的文件描述符和宿主自动化需要额外信任；该工具的用途是本机工作流隔离。Orca 和 Windows 集成的宿主能力会分别显示在 doctor 中。
 
 ## doctor 与常见问题
 
-`vps-route doctor --connect` 分别检查真实沙箱和已配置的 VPS 连接。隔离探测使用生产 `sandbox_command()`、临时 profile、临时项目及假的上游服务，不需要 Claude 账号。探测器还从宿主先运行同一个 cmd.exe 副本作为对照。WSL2 下同时验证显式开启 Windows 的策略。
+`vps-route doctor --connect` 分别检查真实沙箱和已配置的 VPS 连接。隔离探测使用生产 `sandbox_command()`、临时 profile、临时项目及假的上游服务，不需要 Claude 账号。探测器还从宿主先运行同一个 cmd.exe 副本作为对照。cmd.exe 使用 `/d /c echo vps-route-probe`，避免触发 Windows AutoRun。默认只检查当前配置；需要单独检查 Windows 能力时，运行 `vps-route doctor --windows`。
 
-结果分为 `blocked_by_policy`、`reachable`、`unsupported`、`inconclusive`。每个必需项目都有明确的 expected 值。缺失 fixture、超时或无法执行宿主对照会阻止就绪；可选能力的 unsupported 会保留原样。输出的 `ready` 还取决于连接检查结果。
+结果分为 `blocked_by_policy`、`reachable`、`unsupported`、`inconclusive`。每个必需项目都有明确的 expected 值。必需检查超时或结果不符会阻止就绪。严格模式下，如果宿主关闭了 Windows 互操作，Windows 执行对照会记为 `unsupported`；其余严格策略仍可正常验收。IPv6 不可用时对应项目也会单独标记。隔离检查失败时，`--connect` 仍会执行连接检查，`ready` 综合两者结果。
+
+`doctor --workspace /mnt/c/Users/<用户>/projects/demo` 另行检查该项目的日常启动挂载计划，包括项目说明、技能和可重连 relay。它不启动 Claude，也不在真实项目中写入测试文件。输出将临时 fixture、实际项目计划及 Windows 挂载来源分开列出。启用了需要读取控制凭据的 Orca 运行时时，项目计划会明确标为未确认，避免把不完整计划判为通过。
+
+doctor 检查嵌套 bubblewrap 是否正常运行，并通过 `unshare -rm` 验证继承的遮罩无法卸载。WSLg 的路径存在、socket 连接和应用运行结果分别报告；连上 socket 只能证明连接能力，应用层操作仍需单独验证。
 
 - **wsl1_unsupported**：先将发行版转换为 WSL2。
 - **windows_broad_directory_is_not_a_workspace**：进入具体项目子目录。

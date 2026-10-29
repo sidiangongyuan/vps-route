@@ -285,3 +285,7 @@ WSL2 中使用 `vps-route run --windows`，或为日常 run 设置 `windows_inte
 该选项默认关闭；开启后提供 Windows 程序和 WSLg 所需能力，宿主程序使用 Windows
 网络与用户权限。auth、install、update、network-test 保持严格策略。
 完整说明见 [Windows 指南](WINDOWS.zh-CN.md)。
+
+`vps-route doctor --windows` 显式检查 Windows 模式；
+`vps-route doctor --workspace <项目目录>` 只生成该项目的日常启动挂载计划。
+可同时加 `--connect`，分别查看隔离、项目计划和 VPS 连接结果。

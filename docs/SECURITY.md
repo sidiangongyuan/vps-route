@@ -186,27 +186,39 @@ doctor probes. WSL1 is refused. The supported seccomp architectures are x86_64
 and aarch64; WSL fails closed on other architectures. The filter denies AF_VSOCK
 socket/socketpair using the low 32 bits of the domain, denies all three io_uring
 syscalls, and kills foreign ABIs including i386/x32. Descendants inherit the
-filter. The filter also denies mount APIs after bubblewrap constructs its tree;
-effective capabilities are dropped. Existing Linux namespace protections remain.
+filter. Mount APIs remain available for nested bubblewrap, including Claude Code's
+Bash sandbox. The outer builder retains --cap-drop ALL. A nested user namespace
+receives inherited mounts as locked units (MNT_LOCKED), so it cannot detach the
+masks to recover covered host files. Non-initial user namespaces cannot mount
+9p, DrvFS or virtiofs; strict AF_VSOCK filtering also prevents access to the
+Windows file-service transport. Doctor verifies a private tmpfs mount/unmount
+control and unsuccessful inherited-mask unmounts inside unshare -rm.
+See [mount namespace restrictions](https://man7.org/linux/man-pages/man7/mount_namespaces.7.html).
+Existing Linux namespace protections remain.
 
 Strict mode hides Windows drives outside the chosen project, /run/WSL, /mnt/wsl,
 /mnt/wslg and discovered runtime mount aliases. Research mode overlays whole
 Windows mounts before rebinding the project and makes the overlays read-only.
-This covers case-insensitive DrvFS lookup. Windows roots, user roots and sensitive
+File and socket aliases receive /dev/null overlays. Only installed masks are
+excluded from the host socket scan. This covers case-insensitive DrvFS lookup. Windows roots, user roots and sensitive
 workspace paths are rejected case-insensitively, including resolved symlinks and
 mount source aliases. Private profiles and launcher code require Linux storage.
 
 The binfmt F flag can retain /init across mount isolation. Blocking the runtime
 channels and AF_VSOCK therefore carries the execution boundary. Doctor copies a
 system cmd.exe into a disposable project, verifies the same copy on the host,
-and tests it inside the production sandbox. Missing or unsuccessful controls and
-timeouts remain inconclusive. Required inconclusive/unsupported probes prevent
-readiness. It also checks native/high-bit socket calls, filter inheritance,
-io_uring, capabilities, mount creation, IPv4/IPv6 routes, parent loopback canaries,
+and tests it inside the production sandbox with /d to disable AutoRun.
+Doctor checks only the configured mode, or the explicitly requested --windows mode.
+Strict-mode host controls that cannot execute are reported as unsupported and
+do not require Windows interoperability for readiness. Required probes retain
+fail-closed handling of failures/timeouts. Missing IPv6 capabilities are reported
+separately. Native Linux architectures without this filter retain the original
+builder path and expose filter checks as unsupported; WSL refuses these architectures. It also checks native/high-bit socket calls, filter inheritance,
+io_uring, capabilities, inherited mask locks, nested bubblewrap, IPv4/IPv6 routes, parent loopback canaries,
 and an approved fixture relay. The fixture uses no account or real host service.
 
 Explicit windows_interop enables Windows execution, Windows drive writes and
-WSLg display/audio endpoints during daily run. Windows processes use host
+the entire read-only /mnt/wslg tree plus X11/Wayland endpoint mappings during daily run. Windows processes use host
 networking and user permissions, including access to user-readable Windows
 credentials. They may start processes outside the Linux sandbox. Doctor reports
 windows_interop_enabled, host_execution_allowed and vps_only_guarantee=false.
@@ -225,9 +237,19 @@ canary validation for each deployment. The tool retains its documented scope
 as a local workflow sandbox; these shared-file and host-service capabilities
 limit containment of actively hostile code.
 
-WSLg exposure grants display, clipboard and audio capabilities. Doctor records
-endpoint availability and never reads clipboard contents or records audio.
+WSLg exposure includes the entire shared tree and grants display, clipboard and
+audio capabilities. Doctor reports path existence, socket connection and application
+validation separately. Application behavior remains untested by the socket check;
+doctor never reads clipboard contents or records audio.
 An X11 fixture window was opened and closed locally. Wayland applications,
 audio, clipboard behavior, untested NAT deployments and ARM64 runtime behavior
 require additional platform validation. The verified host combination is
 documented in the local validation report.
+
+
+Doctor's temporary fixture checks and --workspace mount-plan checks have separate
+scopes. The workspace plan uses the real profile, project instructions, skills,
+research/Windows options and reconnectable relay layout without starting Claude
+or writing fixtures into the user's project. Credential-bearing Orca plans remain
+explicitly inconclusive. VPS connectivity is always checked when --connect is
+requested, independently of isolation results; readiness combines both.

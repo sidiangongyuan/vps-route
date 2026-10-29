@@ -47,6 +47,15 @@ class FilterProgramTests(unittest.TestCase):
 @unittest.skipUnless(shutil.which("bwrap") and os.uname().machine == "x86_64",
                      "needs bubblewrap on x86_64")
 class FilterRuntimeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        control = subprocess.run(
+            ["bwrap", "--unshare-user", "--unshare-net", "--ro-bind", "/", "/",
+             "--proc", "/proc", "--dev", "/dev", "--", "/bin/true"],
+            capture_output=True, timeout=10, check=False)
+        if control.returncode:
+            raise unittest.SkipTest("host bubblewrap preflight unavailable")
+
     def run_probe(self, mode: str) -> list[str]:
         result = subprocess.run(
             ["/usr/bin/python3", str(FILTER_ENTRY), mode, "bwrap", "--unshare-user",
@@ -54,8 +63,7 @@ class FilterRuntimeTests(unittest.TestCase):
              "--", "/usr/bin/python3", "-c", PROBE],
             capture_output=True, text=True, timeout=20, check=False,
         )
-        if result.returncode:
-            self.skipTest("nested bubblewrap unavailable: " + result.stderr.strip()[-200:])
+        self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.split()
 
     def test_default_blocks_vsock_including_high_bits_and_io_uring(self):
