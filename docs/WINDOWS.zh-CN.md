@@ -47,6 +47,45 @@ NAT 下可能需要你自行调整 Clash 的局域网访问和 Windows 防火墙
 
 共享项目是可写目录。只把工作所需文件放进去，避免放入凭据、通用宿主代理 socket 或由宿主自动执行的任务入口。用户主动复制进项目的秘密、预先放置的硬链接，以及外部文件监控器消费项目内容，都属于共享文件授权的范围。本机已用专用 canary 验证 NTFS 目录联接：指向敏感目录的项目入口被拒绝，项目内指向邻居的联接也无法读取目标。已测组合之外的迁移用户资料和重定向布局仍需专项测试。
 
+## 在项目中启动
+
+在 Ubuntu 终端进入具体项目目录，然后启动：
+
+```bash
+cd "/mnt/d/projects/demo"
+vps-route run
+```
+
+Windows 的 `D:\\projects\\demo` 对应 `/mnt/d/projects/demo`；其他盘符同理。路径有空格时保留引号。当前目录就是本次授权给 Claude 的项目目录。
+
+使用 `vps-route run` 启动隔离的 Linux Claude。WSL 会继承部分 Windows PATH，直接输入 `claude` 可能命中 Windows npm 安装的 `claude.exe`；可用 `type -a claude` 查看入口。直接启动的其他 Claude 安装不自动继承 VPS Route 的路由与隔离设置。
+
+已有 setup token 时，在本机执行 `vps-route auth import-token`，粘贴到隐藏提示，再用 `vps-route auth status --text` 查看存储状态。存储成功后，还应实际发送一次请求确认账号可用。不要把 token 放进命令参数、项目文件或问题报告。
+
+## 在 Orca 中使用 WSL 项目
+
+Orca 的 `Local Windows` 项目默认创建 Windows 终端。当前核对的 Windows Orca 1.4.243 提供 WSL 主机入口：
+
+1. 点击侧栏 `Projects` 旁的 `＋`，打开添加项目窗口。
+2. 打开 `Host` 下拉菜单，选择 `Add remote host → Add WSL distro`。
+3. 选择 Ubuntu 发行版，完成添加并等待 Linux 服务就绪。Orca 将此入口标为 Experimental。
+4. 选择这个 WSL 主机，浏览并添加 `/mnt/d/projects/demo` 等具体项目目录。
+5. 在该项目中新建 Linux 终端，执行 `vps-route run`。
+
+现有 Windows 终端也可以进入 Ubuntu，再启动 VPS Route：
+
+```powershell
+wsl -d Ubuntu-22.04 --cd /mnt/d/projects/demo
+```
+
+```bash
+vps-route run
+```
+
+这条命令只切换当前终端；完整的 Orca Linux 运行时由 WSL 主机入口启动。其他 Orca 版本的菜单可能不同。
+
+需要授权 Claude 操作 Orca 时，在 Orca 管理的 Linux 终端使用 `vps-route run --orca`。该接口依赖兼容的 Linux CLI 包装器及本地 Unix socket，需要单独核验；成功打开 WSL 终端不等于控制接口已验证。Orca 新启动的 Claude 也应使用 VPS Route 入口。Orca 执行的宿主任务拥有宿主能力，详见 [Orca 使用说明](USAGE.zh-CN.md#在-orca-里使用可选)。
+
 ## Windows 程序与 WSLg
 
 默认模式禁止 Windows 程序执行，过滤 AF_VSOCK、io_uring 和兼容 ABI；保持私有网络、运行时目录和环境变量。受控 cmd.exe 副本测试验证实际执行边界。
@@ -93,3 +132,5 @@ doctor 检查嵌套 bubblewrap 是否正常运行，并通过 `unshare -rm` 验�
 - **安装下载中断**：确认 VPS 转发和代理路径恢复后重试 `vps-route install`，已安装成功的版本会保留。
 
 安全机制参考：[WSL 互操作](https://wsl.dev/technical-documentation/interop/)、[微软 WSL 网络说明](https://learn.microsoft.com/en-us/windows/wsl/networking)、[16 项审查清单](dev/wsl-escape-paths.zh-CN.md)。
+
+验证范围与待完成项目见 [Windows 验证记录](dev/windows-validation.zh-CN.md)。
